@@ -203,24 +203,55 @@ EOF
     # Step 7: Start services
     log "Step 7: Starting services..."
     
+    # Function to check if CLIProxyAPI is actually responding
+    check_cliproxy_running() {
+        curl -sf "http://127.0.0.1:8317/v1/models" -H "Authorization: Bearer $(grep -oP 'api_key:\s*\K.*' "$SCRIPT_DIR/config.yaml" 2>/dev/null || echo 'test')" >/dev/null 2>&1
+    }
+    
     # Start CLIProxyAPI via brew services
-    if brew services list 2>/dev/null | grep -q "cliproxyapi.*started"; then
-        log "CLIProxyAPI already running"
+    if check_cliproxy_running; then
+        log "CLIProxyAPI already running and responding"
     else
-        # Try to start, handle errors gracefully
-        if brew services start cliproxyapi 2>&1; then
-            log "CLIProxyAPI started"
+        # Try brew services first
+        log "Starting CLIProxyAPI via brew services..."
+        brew services stop cliproxyapi 2>/dev/null || true
+        sleep 1
+        
+        # Unload any stale launchctl registration
+        launchctl unload ~/Library/LaunchAgents/homebrew.mxcl.cliproxyapi.plist 2>/dev/null || true
+        
+        # Start fresh
+        brew services start cliproxyapi 2>&1 || true
+        sleep 2
+        
+        # Check if it's actually running
+        if check_cliproxy_running; then
+            log "CLIProxyAPI started via brew services"
         else
-            warn "brew services start failed. Trying to restart..."
-            # Stop first, then start (handles "already loaded" errors)
-            brew services stop cliproxyapi 2>/dev/null || true
+            warn "brew services not keeping CLIProxyAPI running. Using direct background mode..."
+            
+            # Kill any zombie processes
+            pkill -f "cliproxyapi" 2>/dev/null || true
             sleep 1
-            if brew services start cliproxyapi 2>&1; then
-                log "CLIProxyAPI started after restart"
+            
+            # Run directly in background
+            CLIPROXY_BIN="/opt/homebrew/opt/cliproxyapi/bin/cliproxyapi"
+            [[ ! -f "$CLIPROXY_BIN" ]] && CLIPROXY_BIN="/usr/local/opt/cliproxyapi/bin/cliproxyapi"
+            [[ ! -f "$CLIPROXY_BIN" ]] && CLIPROXY_BIN=$(command -v cliproxyapi)
+            
+            if [[ -x "$CLIPROXY_BIN" ]]; then
+                nohup "$CLIPROXY_BIN" --config "$SCRIPT_DIR/config.yaml" > /tmp/cliproxyapi.log 2>&1 &
+                sleep 2
+                
+                if check_cliproxy_running; then
+                    log "CLIProxyAPI started in background mode (PID: $!)"
+                    warn "Note: CLIProxyAPI running directly, not via brew services"
+                    warn "To make it persistent, add to your shell startup or use a process manager"
+                else
+                    err "Could not start CLIProxyAPI. Check /tmp/cliproxyapi.log"
+                fi
             else
-                warn "Could not start CLIProxyAPI via brew services."
-                warn "Try manually: brew services restart cliproxyapi"
-                warn "Or run directly: cliproxyapi --config $SCRIPT_DIR/config.yaml"
+                err "CLIProxyAPI binary not found"
             fi
         fi
     fi

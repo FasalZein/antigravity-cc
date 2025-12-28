@@ -124,12 +124,54 @@ anticc-status() {
 }
 
 # ============================================================================
+# QUICK START (fallback for brew services issues)
+# ============================================================================
+
+# Start CLIProxyAPI directly if brew services isn't working
+anticc-start-cliproxy() {
+    if _is_running "CLIProxyAPI" || _is_running "cliproxyapi"; then
+        _log "CLIProxyAPI already running"
+        return 0
+    fi
+    
+    local bin="/opt/homebrew/opt/cliproxyapi/bin/cliproxyapi"
+    [[ ! -f "$bin" ]] && bin="/usr/local/opt/cliproxyapi/bin/cliproxyapi"
+    [[ ! -f "$bin" ]] && bin=$(command -v cliproxyapi 2>/dev/null)
+    
+    if [[ ! -x "$bin" ]]; then
+        _warn "CLIProxyAPI not found. Install with: brew install cliproxyapi"
+        return 1
+    fi
+    
+    local config="$CLIPROXY_DIR/config.yaml"
+    [[ ! -f "$config" ]] && config="/opt/homebrew/etc/cliproxyapi.conf"
+    [[ ! -f "$config" ]] && config="/usr/local/etc/cliproxyapi.conf"
+    
+    if [[ ! -f "$config" ]]; then
+        _warn "Config not found. Run setup.sh first."
+        return 1
+    fi
+    
+    _log "Starting CLIProxyAPI directly..."
+    nohup "$bin" --config "$config" > /tmp/cliproxyapi.log 2>&1 &
+    sleep 2
+    
+    if _is_running "cliproxyapi"; then
+        _log "CLIProxyAPI started (PID: $!)"
+    else
+        _warn "Failed to start. Check: tail /tmp/cliproxyapi.log"
+        return 1
+    fi
+}
+
+# ============================================================================
 # LEGACY COMMANDS (Backward Compatibility - profile only)
 # ============================================================================
 
 anticc-up() {
     _warn "anticc-up is deprecated. Services are managed via brew services."
     _warn "Use: brew services start cliproxyapi && ccr start"
+    _warn "Or use: anticc-start-cliproxy (direct mode fallback)"
     anticc-on
 }
 
@@ -266,21 +308,24 @@ anticc - Antigravity Claude Code Profile Manager
 Architecture:
   Claude Code → CCR (3456) → CLIProxyAPI (8317) → Antigravity
 
-Profile Commands (environment variables only):
-  anticc-on       Enable Antigravity mode (set env vars)
-  anticc-off      Disable Antigravity mode (unset env vars)
-  anticc-status   Check current profile and service status (read-only)
-  anticc-diagnose Run diagnostics to troubleshoot issues
+Profile Commands:
+  anticc-on             Enable Antigravity mode (set env vars)
+  anticc-off            Disable Antigravity mode (unset env vars)
+  anticc-status         Check current profile and service status
+  anticc-diagnose       Run diagnostics to troubleshoot issues
 
-Service Management (external):
-  brew services start cliproxyapi   Start CLIProxyAPI
-  brew services stop cliproxyapi    Stop CLIProxyAPI
-  brew services restart cliproxyapi Restart CLIProxyAPI
+Service Commands:
+  anticc-start-cliproxy Start CLIProxyAPI directly (recommended)
+  
+External Service Management:
+  brew services start cliproxyapi   Start CLIProxyAPI via brew
   ccr start                         Start CCR
-  ccr stop                          Stop CCR
 
-Note: This script does NOT start/stop/restart services.
-      Services are managed externally via brew services and ccr.
+Troubleshooting:
+  If brew services doesn't keep CLIProxyAPI running, use:
+    anticc-start-cliproxy
+  
+  This starts CLIProxyAPI directly with the correct config file.
 
 Environment variables are auto-exported when sourced (for IDE plugins).
 To disable auto-export: export ANTICC_AUTO_ENABLE=false before sourcing.
