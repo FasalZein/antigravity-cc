@@ -112,25 +112,32 @@ if [[ "$OS" == "macos" ]]; then
         fi
     fi
     
-    # Link config to Homebrew's config location
-    # CLIProxyAPI brew service looks for config at /opt/homebrew/etc/cliproxyapi.conf
+    # Symlink our config to Homebrew's config location
+    # CLIProxyAPI brew service uses config at /opt/homebrew/etc/cliproxyapi.conf
     BREW_CONFIG_DIR="/opt/homebrew/etc"
     [[ ! -d "$BREW_CONFIG_DIR" ]] && BREW_CONFIG_DIR="/usr/local/etc"
+    BREW_CONFIG_FILE="$BREW_CONFIG_DIR/cliproxyapi.conf"
     
     if [[ -d "$BREW_CONFIG_DIR" ]]; then
-        BREW_CONFIG_FILE="$BREW_CONFIG_DIR/cliproxyapi.conf"
+        # Check if already symlinked to our config
         if [[ -L "$BREW_CONFIG_FILE" ]] && [[ "$(readlink "$BREW_CONFIG_FILE")" == "$SCRIPT_DIR/config.yaml" ]]; then
-            log "Homebrew config already linked"
+            log "Homebrew config already symlinked to our config"
         else
-            # Backup existing config if it exists and is not a symlink
-            [[ -f "$BREW_CONFIG_FILE" && ! -L "$BREW_CONFIG_FILE" ]] && mv "$BREW_CONFIG_FILE" "$BREW_CONFIG_FILE.backup"
+            # Backup existing config if it's a regular file
+            if [[ -f "$BREW_CONFIG_FILE" && ! -L "$BREW_CONFIG_FILE" ]]; then
+                mv "$BREW_CONFIG_FILE" "$BREW_CONFIG_FILE.backup"
+                log "Backed up existing config to $BREW_CONFIG_FILE.backup"
+            fi
+            
+            # Remove existing symlink if it points elsewhere
+            [[ -L "$BREW_CONFIG_FILE" ]] && rm "$BREW_CONFIG_FILE"
             
             # Create symlink
             ln -sf "$SCRIPT_DIR/config.yaml" "$BREW_CONFIG_FILE"
-            log "Linked config to $BREW_CONFIG_FILE"
+            log "Symlinked $BREW_CONFIG_FILE → $SCRIPT_DIR/config.yaml"
         fi
     else
-        warn "Homebrew etc directory not found. You may need to configure CLIProxyAPI manually."
+        warn "Homebrew etc directory not found. CLIProxyAPI may need manual config."
     fi
     
     # Step 5: Create CCR config
