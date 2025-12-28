@@ -198,8 +198,22 @@ EOF
     if brew services list 2>/dev/null | grep -q "cliproxyapi.*started"; then
         log "CLIProxyAPI already running"
     else
-        brew services start cliproxyapi
-        log "CLIProxyAPI started"
+        # Try to start, handle errors gracefully
+        if brew services start cliproxyapi 2>&1; then
+            log "CLIProxyAPI started"
+        else
+            warn "brew services start failed. Trying to restart..."
+            # Stop first, then start (handles "already loaded" errors)
+            brew services stop cliproxyapi 2>/dev/null || true
+            sleep 1
+            if brew services start cliproxyapi 2>&1; then
+                log "CLIProxyAPI started after restart"
+            else
+                warn "Could not start CLIProxyAPI via brew services."
+                warn "Try manually: brew services restart cliproxyapi"
+                warn "Or run directly: cliproxyapi --config $SCRIPT_DIR/config.yaml"
+            fi
+        fi
     fi
     
     # Start CCR
