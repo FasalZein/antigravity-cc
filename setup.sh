@@ -136,6 +136,15 @@ if [[ "$OS" == "macos" ]]; then
             ln -sf "$SCRIPT_DIR/config.yaml" "$BREW_CONFIG_FILE"
             log "Symlinked $BREW_CONFIG_FILE → $SCRIPT_DIR/config.yaml"
         fi
+        
+        # Verify symlink is valid
+        if [[ -L "$BREW_CONFIG_FILE" ]] && [[ -f "$(readlink -f "$BREW_CONFIG_FILE")" ]]; then
+            log "Config symlink verified ✓"
+        else
+            warn "Config symlink may be broken!"
+            warn "Target: $SCRIPT_DIR/config.yaml"
+            warn "Please check if the file exists."
+        fi
     else
         warn "Homebrew etc directory not found. CLIProxyAPI may need manual config."
     fi

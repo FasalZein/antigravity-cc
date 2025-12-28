@@ -151,6 +151,111 @@ anticc-restart() {
 }
 
 # ============================================================================
+# DIAGNOSTICS
+# ============================================================================
+
+anticc-diagnose() {
+    echo "${_C_BOLD}=== Antigravity Diagnostics ===${_C_NC}"
+    echo ""
+    
+    # Check CLIProxyAPI installation
+    echo "${_C_BOLD}1. CLIProxyAPI Installation:${_C_NC}"
+    if command -v cliproxyapi &>/dev/null; then
+        echo "   Binary: $(command -v cliproxyapi)"
+        echo "   Version: $(cliproxyapi --version 2>/dev/null || echo 'unknown')"
+    else
+        echo "   ${_C_RED}NOT INSTALLED${_C_NC} - run: brew install cliproxyapi"
+    fi
+    echo ""
+    
+    # Check config
+    echo "${_C_BOLD}2. Configuration:${_C_NC}"
+    local brew_config="/opt/homebrew/etc/cliproxyapi.conf"
+    [[ ! -f "$brew_config" ]] && brew_config="/usr/local/etc/cliproxyapi.conf"
+    
+    if [[ -L "$brew_config" ]]; then
+        local target=$(readlink "$brew_config")
+        echo "   Symlink: $brew_config → $target"
+        if [[ -f "$target" ]]; then
+            echo "   Target: ${_C_GREEN}exists${_C_NC}"
+        else
+            echo "   Target: ${_C_RED}MISSING${_C_NC}"
+        fi
+    elif [[ -f "$brew_config" ]]; then
+        echo "   Config: $brew_config (regular file)"
+    else
+        echo "   Config: ${_C_RED}NOT FOUND${_C_NC}"
+    fi
+    echo ""
+    
+    # Check API key
+    echo "${_C_BOLD}3. API Key:${_C_NC}"
+    if [[ -n "$CLIPROXY_API_KEY" ]]; then
+        echo "   CLIPROXY_API_KEY: ${_C_GREEN}set${_C_NC} (${#CLIPROXY_API_KEY} chars)"
+    else
+        echo "   CLIPROXY_API_KEY: ${_C_RED}NOT SET${_C_NC}"
+    fi
+    echo ""
+    
+    # Check ports
+    echo "${_C_BOLD}4. Ports:${_C_NC}"
+    if lsof -i :${ANTICC_CLIPROXY_PORT} &>/dev/null; then
+        echo "   Port ${ANTICC_CLIPROXY_PORT}: ${_C_GREEN}in use${_C_NC}"
+        lsof -i :${ANTICC_CLIPROXY_PORT} 2>/dev/null | head -2 | tail -1 | awk '{print "   Process: " $1 " (PID: " $2 ")"}'
+    else
+        echo "   Port ${ANTICC_CLIPROXY_PORT}: ${_C_YELLOW}free${_C_NC}"
+    fi
+    
+    if lsof -i :${ANTICC_CCR_PORT} &>/dev/null; then
+        echo "   Port ${ANTICC_CCR_PORT}: ${_C_GREEN}in use${_C_NC}"
+        lsof -i :${ANTICC_CCR_PORT} 2>/dev/null | head -2 | tail -1 | awk '{print "   Process: " $1 " (PID: " $2 ")"}'
+    else
+        echo "   Port ${ANTICC_CCR_PORT}: ${_C_YELLOW}free${_C_NC}"
+    fi
+    echo ""
+    
+    # Check brew service logs
+    echo "${_C_BOLD}5. Service Logs:${_C_NC}"
+    local brew_log="$HOME/Library/Logs/Homebrew/cliproxyapi.log"
+    if [[ -f "$brew_log" ]]; then
+        echo "   Last 5 lines of $brew_log:"
+        tail -5 "$brew_log" | sed 's/^/   /'
+    else
+        echo "   No brew service log found at $brew_log"
+    fi
+    echo ""
+    
+    # Check CCR config
+    echo "${_C_BOLD}6. CCR Configuration:${_C_NC}"
+    local ccr_config="$HOME/.config/ccr/config.json"
+    if [[ -f "$ccr_config" ]]; then
+        echo "   Config: $ccr_config"
+        echo "   Content:"
+        cat "$ccr_config" | sed 's/^/   /'
+    else
+        echo "   Config: ${_C_RED}NOT FOUND${_C_NC} at $ccr_config"
+    fi
+    echo ""
+    
+    # Quick connectivity test
+    echo "${_C_BOLD}7. Connectivity Test:${_C_NC}"
+    if curl -sf "http://127.0.0.1:${ANTICC_CLIPROXY_PORT}/v1/models" -H "Authorization: Bearer $CLIPROXY_API_KEY" &>/dev/null; then
+        echo "   CLIProxyAPI (${ANTICC_CLIPROXY_PORT}): ${_C_GREEN}responding${_C_NC}"
+    else
+        echo "   CLIProxyAPI (${ANTICC_CLIPROXY_PORT}): ${_C_RED}not responding${_C_NC}"
+    fi
+    
+    if curl -sf "http://127.0.0.1:${ANTICC_CCR_PORT}/health" &>/dev/null; then
+        echo "   CCR (${ANTICC_CCR_PORT}): ${_C_GREEN}responding${_C_NC}"
+    else
+        echo "   CCR (${ANTICC_CCR_PORT}): ${_C_RED}not responding${_C_NC}"
+    fi
+    echo ""
+    
+    echo "${_C_BOLD}=== End Diagnostics ===${_C_NC}"
+}
+
+# ============================================================================
 # HELP
 # ============================================================================
 
@@ -165,6 +270,7 @@ Profile Commands (environment variables only):
   anticc-on       Enable Antigravity mode (set env vars)
   anticc-off      Disable Antigravity mode (unset env vars)
   anticc-status   Check current profile and service status (read-only)
+  anticc-diagnose Run diagnostics to troubleshoot issues
 
 Service Management (external):
   brew services start cliproxyapi   Start CLIProxyAPI
