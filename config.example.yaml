@@ -1,0 +1,102 @@
+# CLIProxyAPI Configuration for Antigravity
+#
+# This config is optimized for using Claude Code with Antigravity models.
+# Antigravity provides access to Claude, Gemini, and GPT models via Google OAuth.
+#
+# Quick Start:
+#   1. Install: brew install router-for-me/tap/cliproxyapi
+#   2. Login:   CLIProxyAPI --antigravity-login
+#   3. Run:     CLIProxyAPI --config config.yaml
+#   4. Use:     Set ANTHROPIC_BASE_URL=http://127.0.0.1:8317
+
+# =============================================================================
+# SERVER SETTINGS
+# =============================================================================
+
+# Port for the proxy server
+port: 8317
+
+# Bind to localhost only (recommended for security)
+host: "127.0.0.1"
+
+# Enable debug logging (set to true for troubleshooting)
+debug: false
+
+# Write logs to files in ./logs/ directory
+logging-to-file: true
+
+# =============================================================================
+# AUTHENTICATION
+# =============================================================================
+
+# Directory for storing OAuth tokens
+# Tokens are saved as: ~/.cli-proxy-api/antigravity-<email>.json
+auth-dir: "~/.cli-proxy-api"
+
+# API keys for client authentication
+# Generate your own: openssl rand -hex 24 | sed 's/^/sk-/'
+api-keys:
+  - "sk-your-api-key-here"
+
+# =============================================================================
+# REQUEST HANDLING
+# =============================================================================
+
+# Retry failed requests (handles rate limits and temporary errors)
+request-retry: 3
+
+# Maximum wait time for rate-limited credentials before retry (seconds)
+max-retry-interval: 30
+
+# Automatically switch when quota exceeded
+quota-exceeded:
+  switch-project: true        # Try another account
+  switch-preview-model: true  # Try preview model variant
+
+# =============================================================================
+# REMOTE MANAGEMENT
+# =============================================================================
+# Settings for remote control panel access
+
+remote-management:
+  allow-remote: false
+  secret-key: ""
+  disable-control-panel: true
+
+# =============================================================================
+# USAGE STATISTICS (Optional)
+# =============================================================================
+# Track token usage across accounts. Disabled by default.
+
+usage-statistics-enabled: false
+
+# =============================================================================
+# AVAILABLE ANTIGRAVITY MODELS
+# =============================================================================
+# Use these model names with Claude Code:
+#
+# Claude Models (recommended):
+#   - claude-opus-4-5-thinking           # Best quality, extended thinking
+#   - claude-sonnet-4-5-thinking         # Fast with extended thinking
+#   - claude-sonnet-4-5                  # Fast, standard mode
+#
+# Gemini Models:
+#   - gemini-3-pro-high                  # Gemini 3 Pro High (1M context)
+#   - gemini-3-pro-low                   # Gemini 3 Pro Low (1M context)
+#   - gemini-3-flash                     # Gemini 3 Flash (fast)
+#
+# GPT Models:
+#   - gpt-oss-120b-medium                # GPT-OSS 120B
+#
+# =============================================================================
+# ENVIRONMENT VARIABLES FOR CLAUDE CODE
+# =============================================================================
+# Add these to your ~/.zshrc or ~/.bashrc:
+#
+#   export ANTHROPIC_BASE_URL="http://127.0.0.1:8317"
+#   export ANTHROPIC_AUTH_TOKEN="sk-your-api-key-here"
+#   export ANTHROPIC_DEFAULT_OPUS_MODEL="gemini-claude-opus-4-5-thinking"
+#   export ANTHROPIC_DEFAULT_SONNET_MODEL="gemini-claude-sonnet-4-5-thinking"
+#   export ANTHROPIC_DEFAULT_HAIKU_MODEL="gemini-claude-sonnet-4-5"
+#
+# =============================================================================

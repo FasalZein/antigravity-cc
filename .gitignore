@@ -1,0 +1,37 @@
+# Upstream CLIProxyAPI source (cloned for reference)
+upstream-source/
+
+# IDE and editor
+.claude/
+.vscode/
+
+# MCP config with API keys
+.mcp.json
+
+# Environment file with secrets
+.env
+
+# Config with API keys (use config.example.yaml as template)
+config.yaml
+
+# Logs
+logs/
+
+# Go binaries
+middleware/cliproxy-middleware
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Go test binary
+*.test
+
+# Go coverage
+*.out
+
+# macOS
+.DS_Store
+middleware/middleware-proxy
+issue_streaming_token_count.md
