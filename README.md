@@ -43,7 +43,7 @@ If you prefer to set up manually:
 
 **macOS (Homebrew):**
 ```bash
-brew install router-for-me/tap/cliproxyapi
+brew install cliproxyapi
 ```
 
 **Linux (Direct Download):**

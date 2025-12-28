@@ -4,7 +4,7 @@
 # Antigravity provides access to Claude, Gemini, and GPT models via Google OAuth.
 #
 # Quick Start:
-#   1. Install: brew install router-for-me/tap/cliproxyapi
+#   1. Install: brew install cliproxyapi
 #   2. Login:   cliproxyapi --antigravity-login
 #   3. Run:     brew services start cliproxyapi
 #   4. Use:     Set ANTHROPIC_BASE_URL=http://127.0.0.1:8317

@@ -64,7 +64,7 @@ if [[ "$OS" == "macos" ]]; then
     if command -v cliproxyapi &>/dev/null; then
         log "CLIProxyAPI already installed"
     else
-        brew install router-for-me/tap/cliproxyapi
+        brew install cliproxyapi
         log "CLIProxyAPI installed"
     fi
     
