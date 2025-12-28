@@ -98,7 +98,7 @@ if [[ "$OS" == "macos" ]]; then
         CLIPROXY_API_KEY="$API_KEY"
     fi
     
-    # Create config.yaml
+    # Create config.yaml in project directory
     if [[ -f "$SCRIPT_DIR/config.yaml" ]]; then
         log "config.yaml already exists"
     else
@@ -110,6 +110,27 @@ if [[ "$OS" == "macos" ]]; then
             error "config.example.yaml not found!"
             exit 1
         fi
+    fi
+    
+    # Link config to Homebrew's config location
+    # CLIProxyAPI brew service looks for config at /opt/homebrew/etc/cliproxyapi.conf
+    BREW_CONFIG_DIR="/opt/homebrew/etc"
+    [[ ! -d "$BREW_CONFIG_DIR" ]] && BREW_CONFIG_DIR="/usr/local/etc"
+    
+    if [[ -d "$BREW_CONFIG_DIR" ]]; then
+        BREW_CONFIG_FILE="$BREW_CONFIG_DIR/cliproxyapi.conf"
+        if [[ -L "$BREW_CONFIG_FILE" ]] && [[ "$(readlink "$BREW_CONFIG_FILE")" == "$SCRIPT_DIR/config.yaml" ]]; then
+            log "Homebrew config already linked"
+        else
+            # Backup existing config if it exists and is not a symlink
+            [[ -f "$BREW_CONFIG_FILE" && ! -L "$BREW_CONFIG_FILE" ]] && mv "$BREW_CONFIG_FILE" "$BREW_CONFIG_FILE.backup"
+            
+            # Create symlink
+            ln -sf "$SCRIPT_DIR/config.yaml" "$BREW_CONFIG_FILE"
+            log "Linked config to $BREW_CONFIG_FILE"
+        fi
+    else
+        warn "Homebrew etc directory not found. You may need to configure CLIProxyAPI manually."
     fi
     
     # Step 5: Create CCR config
