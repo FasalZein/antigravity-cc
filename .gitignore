@@ -35,3 +35,4 @@ middleware/cliproxy-middleware
 .DS_Store
 middleware/middleware-proxy
 issue_streaming_token_count.md
+.osgrep

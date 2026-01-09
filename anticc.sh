@@ -5,12 +5,15 @@
 # Usage: source "/path/to/anticc.sh"
 #
 # Commands:
-#   anticc-on     Enable Antigravity mode (set env vars)
-#   anticc-off    Disable Antigravity mode (unset env vars)
-#   anticc-status Check current profile status
+#   anticc-on       Enable Antigravity mode (set env vars)
+#   anticc-off      Disable Antigravity mode (unset env vars)
+#   anticc-status   Check current profile status
+#   anticc-update   Pull latest source and rebuild CLIProxyAPI
+#   anticc-rollback Rollback to previous version if update fails
+#   anticc-version  Show version info (running, binary, source)
 #
-# This script ONLY manages environment variables for Claude Code.
-# CLIProxyAPI and CCR services are managed separately via brew services.
+# CLIProxyAPI is built from source and auto-updated every 12 hours.
+# Services are managed via launchd (not brew).
 # ============================================================================
 
 # Detect script directory
@@ -28,6 +31,11 @@ ANTICC_CCR_PORT=3456
 
 export CLIPROXY_DIR="${CLIPROXY_DIR:-$ANTICC_DIR}"
 
+# Source-based installation paths
+CLIPROXY_BIN_DIR="${HOME}/.local/bin"
+CLIPROXY_SOURCE_DIR="${ANTICC_DIR}/cliproxy-source"
+CLIPROXY_UPDATER="${ANTICC_DIR}/cliproxy-updater.sh"
+
 # Load API key from .env if not set
 [[ -z "$CLIPROXY_API_KEY" && -f "$CLIPROXY_DIR/.env" ]] && source "$CLIPROXY_DIR/.env"
 export CLIPROXY_API_KEY="${CLIPROXY_API_KEY:-}"
@@ -40,7 +48,7 @@ _ANTICC_API_KEY="$CLIPROXY_API_KEY"
 # Model configuration
 _ANTICC_OPUS_MODEL="gemini-claude-opus-4-5-thinking"
 _ANTICC_SONNET_MODEL="gemini-claude-sonnet-4-5-thinking"
-_ANTICC_HAIKU_MODEL="gemini-claude-sonnet-4-5"
+_ANTICC_HAIKU_MODEL="gemini-3-flash-preview"
 
 # Track state
 ANTICC_ENABLED="${ANTICC_ENABLED:-false}"
@@ -84,12 +92,15 @@ anticc-on() {
     _log "Antigravity mode ${_C_GREEN}enabled${_C_NC} → CCR (:${ANTICC_CCR_PORT})"
 }
 
-# Disable Antigravity mode (unset environment variables)
+# Bypass CCR mode (connect directly to CLIProxyAPI, skipping CCR)
 anticc-off() {
-    unset ANTHROPIC_BASE_URL ANTHROPIC_API_KEY
-    unset ANTHROPIC_DEFAULT_OPUS_MODEL ANTHROPIC_DEFAULT_SONNET_MODEL ANTHROPIC_DEFAULT_HAIKU_MODEL
-    export ANTICC_ENABLED="false"
-    _log "Antigravity mode ${_C_YELLOW}disabled${_C_NC} - using default/other provider"
+    export ANTHROPIC_BASE_URL="http://127.0.0.1:${ANTICC_CLIPROXY_PORT}"
+    export ANTHROPIC_API_KEY="$_ANTICC_API_KEY"
+    export ANTHROPIC_DEFAULT_OPUS_MODEL="$_ANTICC_OPUS_MODEL"
+    export ANTHROPIC_DEFAULT_SONNET_MODEL="$_ANTICC_SONNET_MODEL"
+    export ANTHROPIC_DEFAULT_HAIKU_MODEL="$_ANTICC_HAIKU_MODEL"
+    export ANTICC_ENABLED="direct"
+    _log "Direct mode ${_C_YELLOW}enabled${_C_NC} → CLIProxyAPI (:${ANTICC_CLIPROXY_PORT}) [bypassing CCR]"
 }
 
 # ============================================================================
@@ -98,80 +109,201 @@ anticc-off() {
 
 # Show status
 anticc-status() {
-    echo "${_C_BOLD}Services (read-only):${_C_NC}"
-    
+    echo "${_C_BOLD}Services:${_C_NC}"
+
     # CLIProxyAPI status
-    if _is_running "CLIProxyAPI" || _is_running "cliproxyapi"; then
-        echo "  CLIProxyAPI:  ${_C_GREEN}running${_C_NC} (PID: $(_get_pid 'CLIProxyAPI' || _get_pid 'cliproxyapi')) → :${ANTICC_CLIPROXY_PORT}"
+    if _is_running "cliproxyapi"; then
+        local version=$("${CLIPROXY_BIN_DIR}/cliproxyapi" 2>&1 | grep "Version:" | sed 's/.*Version: \([^,]*\).*/\1/' || echo "?")
+        echo "  CLIProxyAPI:  ${_C_GREEN}running${_C_NC} (PID: $(_get_pid 'cliproxyapi'), $version) → :${ANTICC_CLIPROXY_PORT}"
     else
-        echo "  CLIProxyAPI:  ${_C_RED}stopped${_C_NC} (use: brew services start cliproxyapi)"
+        echo "  CLIProxyAPI:  ${_C_RED}stopped${_C_NC} (use: anticc-start)"
     fi
-    
+
     # CCR status
     if _is_running "claude-code-router"; then
         echo "  CCR:          ${_C_GREEN}running${_C_NC} (PID: $(_get_pid 'claude-code-router')) → :${ANTICC_CCR_PORT}"
     else
         echo "  CCR:          ${_C_RED}stopped${_C_NC} (use: ccr start)"
     fi
-    
+
     echo ""
     echo "${_C_BOLD}Profile:${_C_NC}"
     if [[ "$ANTICC_ENABLED" == "true" ]]; then
         echo "  Anticc: ${_C_GREEN}enabled${_C_NC} → $ANTHROPIC_BASE_URL"
+    elif [[ "$ANTICC_ENABLED" == "direct" ]]; then
+        echo "  Anticc: ${_C_YELLOW}direct${_C_NC} → $ANTHROPIC_BASE_URL"
     else
         echo "  Anticc: ${_C_YELLOW}disabled${_C_NC}"
     fi
+
+    # Show update status
+    echo ""
+    echo "${_C_BOLD}Updates:${_C_NC}"
+    if launchctl list com.cliproxy.updater &>/dev/null; then
+        echo "  Auto-update: ${_C_GREEN}enabled${_C_NC} (every 12h)"
+    else
+        echo "  Auto-update: ${_C_YELLOW}disabled${_C_NC} (run: anticc-enable-autoupdate)"
+    fi
 }
 
 # ============================================================================
-# QUICK START (fallback for brew services issues)
+# SERVICE MANAGEMENT (launchd-based)
 # ============================================================================
 
-# Start CLIProxyAPI directly if brew services isn't working
-anticc-start-cliproxy() {
-    if _is_running "CLIProxyAPI" || _is_running "cliproxyapi"; then
+# Start CLIProxyAPI via launchd
+anticc-start() {
+    if _is_running "cliproxyapi"; then
         _log "CLIProxyAPI already running"
         return 0
     fi
-    
-    local bin="/opt/homebrew/opt/cliproxyapi/bin/cliproxyapi"
-    [[ ! -f "$bin" ]] && bin="/usr/local/opt/cliproxyapi/bin/cliproxyapi"
-    [[ ! -f "$bin" ]] && bin=$(command -v cliproxyapi 2>/dev/null)
-    
-    if [[ ! -x "$bin" ]]; then
-        _warn "CLIProxyAPI not found. Install with: brew install cliproxyapi"
+
+    if [[ ! -x "${CLIPROXY_BIN_DIR}/cliproxyapi" ]]; then
+        _warn "CLIProxyAPI not found at ${CLIPROXY_BIN_DIR}/cliproxyapi"
+        _warn "Run: anticc-update to build from source"
         return 1
     fi
-    
+
     local config="$CLIPROXY_DIR/config.yaml"
-    [[ ! -f "$config" ]] && config="/opt/homebrew/etc/cliproxyapi.conf"
-    [[ ! -f "$config" ]] && config="/usr/local/etc/cliproxyapi.conf"
-    
     if [[ ! -f "$config" ]]; then
-        _warn "Config not found. Run setup.sh first."
+        _warn "Config not found at $config"
         return 1
     fi
-    
-    _log "Starting CLIProxyAPI directly..."
-    nohup "$bin" --config "$config" > /tmp/cliproxyapi.log 2>&1 &
+
+    _log "Starting CLIProxyAPI..."
+    launchctl load ~/Library/LaunchAgents/com.cliproxy.api.plist 2>/dev/null || true
+    launchctl start com.cliproxy.api 2>/dev/null || true
     sleep 2
-    
+
     if _is_running "cliproxyapi"; then
-        _log "CLIProxyAPI started (PID: $!)"
+        _log "CLIProxyAPI started (PID: $(_get_pid 'cliproxyapi'))"
     else
-        _warn "Failed to start. Check: tail /tmp/cliproxyapi.log"
-        return 1
+        _warn "Failed via launchd, trying direct start..."
+        nohup "${CLIPROXY_BIN_DIR}/cliproxyapi" --config "$config" >> ~/.local/var/log/cliproxyapi.log 2>&1 &
+        sleep 2
+        if _is_running "cliproxyapi"; then
+            _log "CLIProxyAPI started directly (PID: $!)"
+        else
+            _warn "Failed to start. Check: tail ~/.local/var/log/cliproxyapi.log"
+            return 1
+        fi
     fi
 }
 
+# Stop CLIProxyAPI
+anticc-stop-service() {
+    _log "Stopping CLIProxyAPI..."
+    launchctl stop com.cliproxy.api 2>/dev/null || true
+    pkill -f "cliproxyapi" 2>/dev/null || true
+    sleep 1
+    if ! _is_running "cliproxyapi"; then
+        _log "CLIProxyAPI stopped"
+    else
+        _warn "CLIProxyAPI still running, force killing..."
+        pkill -9 -f "cliproxyapi" 2>/dev/null || true
+    fi
+}
+
+# Restart CLIProxyAPI
+anticc-restart-service() {
+    anticc-stop-service
+    sleep 1
+    anticc-start
+}
+
 # ============================================================================
-# LEGACY COMMANDS (Backward Compatibility - profile only)
+# UPDATE MANAGEMENT (source-based)
+# ============================================================================
+
+# Show version info
+anticc-version() {
+    echo "${_C_BOLD}CLIProxyAPI Versions:${_C_NC}"
+
+    # Running version
+    if _is_running "cliproxyapi"; then
+        local running=$(curl -sf "http://127.0.0.1:${ANTICC_CLIPROXY_PORT}/" 2>/dev/null | grep -o 'v[0-9.]*' | head -1 || echo "unknown")
+        echo "  Running: ${_C_GREEN}${running}${_C_NC}"
+    else
+        echo "  Running: ${_C_RED}not running${_C_NC}"
+    fi
+
+    # Binary version
+    if [[ -x "${CLIPROXY_BIN_DIR}/cliproxyapi" ]]; then
+        local binary=$("${CLIPROXY_BIN_DIR}/cliproxyapi" 2>&1 | grep "Version:" | sed 's/.*Version: \([^,]*\).*/\1/')
+        echo "  Binary:  ${binary}"
+    else
+        echo "  Binary:  ${_C_RED}not installed${_C_NC}"
+    fi
+
+    # Source version
+    if [[ -d "$CLIPROXY_SOURCE_DIR" ]]; then
+        local source=$(cd "$CLIPROXY_SOURCE_DIR" && git describe --tags --always 2>/dev/null)
+        echo "  Source:  ${source}"
+
+        # Check for updates
+        cd "$CLIPROXY_SOURCE_DIR"
+        git fetch --tags --quiet 2>/dev/null
+        local remote=$(git describe --tags origin/main 2>/dev/null || echo "unknown")
+        if [[ "$source" != "$remote" ]]; then
+            echo "  Remote:  ${_C_YELLOW}${remote}${_C_NC} (update available!)"
+        fi
+    else
+        echo "  Source:  ${_C_RED}not found${_C_NC}"
+    fi
+
+    # Backup version
+    if [[ -f "${CLIPROXY_BIN_DIR}/cliproxyapi.bak" ]]; then
+        local backup=$("${CLIPROXY_BIN_DIR}/cliproxyapi.bak" 2>&1 | grep "Version:" | sed 's/.*Version: \([^,]*\).*/\1/')
+        echo "  Backup:  ${backup} (for rollback)"
+    fi
+}
+
+# Trigger update
+anticc-update() {
+    if [[ ! -x "$CLIPROXY_UPDATER" ]]; then
+        _warn "Updater script not found at $CLIPROXY_UPDATER"
+        return 1
+    fi
+
+    _log "Running CLIProxyAPI update..."
+    "$CLIPROXY_UPDATER" update
+}
+
+# Rollback to previous version
+anticc-rollback() {
+    if [[ ! -x "$CLIPROXY_UPDATER" ]]; then
+        _warn "Updater script not found"
+        return 1
+    fi
+
+    _warn "Rolling back to previous version..."
+    "$CLIPROXY_UPDATER" rollback
+}
+
+# Enable auto-update via launchd
+anticc-enable-autoupdate() {
+    local plist="$HOME/Library/LaunchAgents/com.cliproxy.updater.plist"
+    if [[ ! -f "$plist" ]]; then
+        _warn "Updater plist not found at $plist"
+        return 1
+    fi
+
+    launchctl load "$plist" 2>/dev/null
+    _log "Auto-update enabled (runs every 12 hours)"
+}
+
+# Disable auto-update
+anticc-disable-autoupdate() {
+    launchctl unload ~/Library/LaunchAgents/com.cliproxy.updater.plist 2>/dev/null
+    _log "Auto-update disabled"
+}
+
+# ============================================================================
+# LEGACY COMMANDS (Backward Compatibility)
 # ============================================================================
 
 anticc-up() {
-    _warn "anticc-up is deprecated. Services are managed via brew services."
-    _warn "Use: brew services start cliproxyapi && ccr start"
-    _warn "Or use: anticc-start-cliproxy (direct mode fallback)"
+    _warn "anticc-up is deprecated. Use: anticc-start"
+    anticc-start
     anticc-on
 }
 
@@ -179,17 +311,18 @@ anticc-down() {
     anticc-off
 }
 
-anticc-stop() { 
-    _warn "anticc-stop is deprecated. Use anticc-off to disable profile."
-    _warn "To stop services: brew services stop cliproxyapi && ccr stop"
-    anticc-off
+anticc-stop() {
+    _warn "anticc-stop is deprecated. Use: anticc-stop-service"
+    anticc-stop-service
 }
 
-anticc-restart() { 
-    _warn "anticc-restart is deprecated. Services are managed via brew services."
-    _warn "Use: brew services restart cliproxyapi"
-    anticc-off
-    anticc-on
+anticc-restart() {
+    anticc-restart-service
+}
+
+# Keep old name as alias
+anticc-start-cliproxy() {
+    anticc-start
 }
 
 # ============================================================================
@@ -199,55 +332,56 @@ anticc-restart() {
 anticc-diagnose() {
     echo "${_C_BOLD}=== Antigravity Diagnostics ===${_C_NC}"
     echo ""
-    
+
     # Check CLIProxyAPI installation
     echo "${_C_BOLD}1. CLIProxyAPI Installation:${_C_NC}"
-    if command -v cliproxyapi &>/dev/null; then
-        echo "   Binary: $(command -v cliproxyapi)"
-        echo "   Version: $(cliproxyapi --version 2>/dev/null || echo 'unknown')"
+    if [[ -x "${CLIPROXY_BIN_DIR}/cliproxyapi" ]]; then
+        echo "   Binary: ${CLIPROXY_BIN_DIR}/cliproxyapi"
+        echo "   Version: $("${CLIPROXY_BIN_DIR}/cliproxyapi" 2>&1 | grep 'Version:' | head -1)"
     else
-        echo "   ${_C_RED}NOT INSTALLED${_C_NC} - run: brew install cliproxyapi"
+        echo "   ${_C_RED}NOT INSTALLED${_C_NC} - run: anticc-update"
     fi
     echo ""
-    
+
+    # Check source repo
+    echo "${_C_BOLD}2. Source Repository:${_C_NC}"
+    if [[ -d "$CLIPROXY_SOURCE_DIR" ]]; then
+        echo "   Path: $CLIPROXY_SOURCE_DIR"
+        echo "   Version: $(cd "$CLIPROXY_SOURCE_DIR" && git describe --tags --always 2>/dev/null)"
+        echo "   Branch: $(cd "$CLIPROXY_SOURCE_DIR" && git branch --show-current 2>/dev/null)"
+    else
+        echo "   ${_C_RED}NOT FOUND${_C_NC} at $CLIPROXY_SOURCE_DIR"
+    fi
+    echo ""
+
     # Check config
-    echo "${_C_BOLD}2. Configuration:${_C_NC}"
-    local brew_config="/opt/homebrew/etc/cliproxyapi.conf"
-    [[ ! -f "$brew_config" ]] && brew_config="/usr/local/etc/cliproxyapi.conf"
-    
-    if [[ -L "$brew_config" ]]; then
-        local target=$(readlink "$brew_config")
-        echo "   Symlink: $brew_config → $target"
-        if [[ -f "$target" ]]; then
-            echo "   Target: ${_C_GREEN}exists${_C_NC}"
-        else
-            echo "   Target: ${_C_RED}MISSING${_C_NC}"
-        fi
-    elif [[ -f "$brew_config" ]]; then
-        echo "   Config: $brew_config (regular file)"
+    echo "${_C_BOLD}3. Configuration:${_C_NC}"
+    local config="$CLIPROXY_DIR/config.yaml"
+    if [[ -f "$config" ]]; then
+        echo "   Config: $config"
     else
         echo "   Config: ${_C_RED}NOT FOUND${_C_NC}"
     fi
     echo ""
-    
+
     # Check API key
-    echo "${_C_BOLD}3. API Key:${_C_NC}"
+    echo "${_C_BOLD}4. API Key:${_C_NC}"
     if [[ -n "$CLIPROXY_API_KEY" ]]; then
         echo "   CLIPROXY_API_KEY: ${_C_GREEN}set${_C_NC} (${#CLIPROXY_API_KEY} chars)"
     else
         echo "   CLIPROXY_API_KEY: ${_C_RED}NOT SET${_C_NC}"
     fi
     echo ""
-    
+
     # Check ports
-    echo "${_C_BOLD}4. Ports:${_C_NC}"
+    echo "${_C_BOLD}5. Ports:${_C_NC}"
     if lsof -i :${ANTICC_CLIPROXY_PORT} &>/dev/null; then
         echo "   Port ${ANTICC_CLIPROXY_PORT}: ${_C_GREEN}in use${_C_NC}"
         lsof -i :${ANTICC_CLIPROXY_PORT} 2>/dev/null | head -2 | tail -1 | awk '{print "   Process: " $1 " (PID: " $2 ")"}'
     else
         echo "   Port ${ANTICC_CLIPROXY_PORT}: ${_C_YELLOW}free${_C_NC}"
     fi
-    
+
     if lsof -i :${ANTICC_CCR_PORT} &>/dev/null; then
         echo "   Port ${ANTICC_CCR_PORT}: ${_C_GREEN}in use${_C_NC}"
         lsof -i :${ANTICC_CCR_PORT} 2>/dev/null | head -2 | tail -1 | awk '{print "   Process: " $1 " (PID: " $2 ")"}'
@@ -255,45 +389,47 @@ anticc-diagnose() {
         echo "   Port ${ANTICC_CCR_PORT}: ${_C_YELLOW}free${_C_NC}"
     fi
     echo ""
-    
-    # Check brew service logs
-    echo "${_C_BOLD}5. Service Logs:${_C_NC}"
-    local brew_log="$HOME/Library/Logs/Homebrew/cliproxyapi.log"
-    if [[ -f "$brew_log" ]]; then
-        echo "   Last 5 lines of $brew_log:"
-        tail -5 "$brew_log" | sed 's/^/   /'
+
+    # Check launchd services
+    echo "${_C_BOLD}6. Launchd Services:${_C_NC}"
+    if launchctl list com.cliproxy.api &>/dev/null; then
+        echo "   com.cliproxy.api: ${_C_GREEN}loaded${_C_NC}"
     else
-        echo "   No brew service log found at $brew_log"
+        echo "   com.cliproxy.api: ${_C_YELLOW}not loaded${_C_NC}"
+    fi
+    if launchctl list com.cliproxy.updater &>/dev/null; then
+        echo "   com.cliproxy.updater: ${_C_GREEN}loaded${_C_NC} (auto-update enabled)"
+    else
+        echo "   com.cliproxy.updater: ${_C_YELLOW}not loaded${_C_NC}"
     fi
     echo ""
-    
-    # Check CCR config
-    echo "${_C_BOLD}6. CCR Configuration:${_C_NC}"
-    local ccr_config="$HOME/.config/ccr/config.json"
-    if [[ -f "$ccr_config" ]]; then
-        echo "   Config: $ccr_config"
-        echo "   Content:"
-        cat "$ccr_config" | sed 's/^/   /'
+
+    # Check logs
+    echo "${_C_BOLD}7. Recent Logs:${_C_NC}"
+    local log_file="$HOME/.local/var/log/cliproxyapi.log"
+    if [[ -f "$log_file" ]]; then
+        echo "   Last 3 lines of $log_file:"
+        tail -3 "$log_file" 2>/dev/null | sed 's/^/   /'
     else
-        echo "   Config: ${_C_RED}NOT FOUND${_C_NC} at $ccr_config"
+        echo "   No log file at $log_file"
     fi
     echo ""
-    
+
     # Quick connectivity test
-    echo "${_C_BOLD}7. Connectivity Test:${_C_NC}"
+    echo "${_C_BOLD}8. Connectivity Test:${_C_NC}"
     if curl -sf "http://127.0.0.1:${ANTICC_CLIPROXY_PORT}/v1/models" -H "Authorization: Bearer $CLIPROXY_API_KEY" &>/dev/null; then
         echo "   CLIProxyAPI (${ANTICC_CLIPROXY_PORT}): ${_C_GREEN}responding${_C_NC}"
     else
         echo "   CLIProxyAPI (${ANTICC_CLIPROXY_PORT}): ${_C_RED}not responding${_C_NC}"
     fi
-    
+
     if curl -sf "http://127.0.0.1:${ANTICC_CCR_PORT}/health" &>/dev/null; then
         echo "   CCR (${ANTICC_CCR_PORT}): ${_C_GREEN}responding${_C_NC}"
     else
         echo "   CCR (${ANTICC_CCR_PORT}): ${_C_RED}not responding${_C_NC}"
     fi
     echo ""
-    
+
     echo "${_C_BOLD}=== End Diagnostics ===${_C_NC}"
 }
 
@@ -303,32 +439,42 @@ anticc-diagnose() {
 
 anticc-help() {
     cat << 'EOF'
-anticc - Antigravity Claude Code Profile Manager
+anticc - Antigravity Claude Code CLI
 
 Architecture:
   Claude Code → CCR (3456) → CLIProxyAPI (8317) → Antigravity
 
 Profile Commands:
-  anticc-on             Enable Antigravity mode (set env vars)
-  anticc-off            Disable Antigravity mode (unset env vars)
-  anticc-status         Check current profile and service status
-  anticc-diagnose       Run diagnostics to troubleshoot issues
+  anticc-on              Enable Antigravity mode (set env vars via CCR)
+  anticc-off             Direct mode (bypass CCR, connect to CLIProxyAPI)
+  anticc-status          Show service and profile status
 
 Service Commands:
-  anticc-start-cliproxy Start CLIProxyAPI directly (recommended)
-  
-External Service Management:
-  brew services start cliproxyapi   Start CLIProxyAPI via brew
-  ccr start                         Start CCR
+  anticc-start           Start CLIProxyAPI service
+  anticc-stop-service    Stop CLIProxyAPI service
+  anticc-restart-service Restart CLIProxyAPI service
 
-Troubleshooting:
-  If brew services doesn't keep CLIProxyAPI running, use:
-    anticc-start-cliproxy
-  
-  This starts CLIProxyAPI directly with the correct config file.
+Update Commands:
+  anticc-version         Show version info (running, binary, source, remote)
+  anticc-update          Pull latest and rebuild CLIProxyAPI
+  anticc-rollback        Rollback to previous version if update fails
+
+Auto-Update:
+  anticc-enable-autoupdate   Enable 12-hour auto-update via launchd
+  anticc-disable-autoupdate  Disable auto-update
+
+Diagnostics:
+  anticc-diagnose        Run full diagnostics
+
+Files:
+  Binary:   ~/.local/bin/cliproxyapi
+  Source:   ~/Dev/Code Forge/CLIProxyAPI/cliproxy-source
+  Config:   ~/Dev/Code Forge/CLIProxyAPI/config.yaml
+  Logs:     ~/.local/var/log/cliproxyapi.log
+  Updater:  ~/Dev/Code Forge/CLIProxyAPI/cliproxy-updater.sh
 
 Environment variables are auto-exported when sourced (for IDE plugins).
-To disable auto-export: export ANTICC_AUTO_ENABLE=false before sourcing.
+To disable: export ANTICC_AUTO_ENABLE=false before sourcing.
 EOF
 }
 
