@@ -57,9 +57,6 @@ launchctl unload ~/Library/LaunchAgents/homebrew.mxcl.cliproxyapi.plist 2>/dev/n
 
 # Uninstall the brew package
 brew uninstall cliproxyapi
-
-# Remove the brew tap (optional)
-brew untap plandex-ai/tap 2>/dev/null
 ```
 
 ### Step 2: Run the New Setup
