@@ -38,7 +38,135 @@ The setup script will:
 |----|--------------|
 | **macOS** | Go 1.24+, Node.js, Git (Homebrew recommended) |
 | **Linux** | Go 1.24+, Node.js, Git, systemd (optional for auto-start) |
-| **Windows** | Use WSL2 with Ubuntu, then follow Linux instructions |
+| **Windows** | Go 1.24+, Git, PowerShell 5+ (no Node.js needed!) |
+
+---
+
+## Windows Setup
+
+Native Windows support is now available! No WSL required.
+
+### Quick Start (Windows)
+
+```powershell
+# Clone the repo
+git clone https://github.com/YourUsername/antigravity-CC.git $HOME\antigravity-CC
+cd $HOME\antigravity-CC
+
+# Run setup (as Administrator recommended for Task Scheduler)
+.\setup-windows.ps1
+```
+
+The setup script will:
+1. Check prerequisites (Go, Git)
+2. Clone CLIProxyAPI source and build from source
+3. Create config files and .env
+4. Set up Task Scheduler for auto-start and 12-hour auto-update
+5. Add anticc to your PowerShell profile
+6. Start CLIProxyAPI
+
+### Manual Setup (Windows)
+
+```powershell
+# 1. Install prerequisites
+winget install Git.Git
+winget install GoLang.Go
+
+# 2. Clone this repo
+git clone https://github.com/YourUsername/antigravity-CC.git $HOME\antigravity-CC
+cd $HOME\antigravity-CC
+
+# 3. Clone and build CLIProxyAPI
+git clone https://github.com/router-for-me/CLIProxyAPIPlus.git cliproxy-source
+cd cliproxy-source
+$VERSION = git describe --tags --always
+$COMMIT = git rev-parse --short HEAD
+$env:CGO_ENABLED = "0"
+go build -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT" -o "$env:LOCALAPPDATA\Programs\CLIProxyAPI\cliproxyapi.exe" ./cmd/server
+cd ..
+
+# 4. Create config
+Copy-Item config.example.yaml config.yaml
+# Edit config.yaml with your settings
+
+# 5. Create .env file
+$API_KEY = "sk-" + -join ((48..57) + (97..122) | Get-Random -Count 48 | % {[char]$_})
+"CLIPROXY_API_KEY=`"$API_KEY`"" | Out-File -FilePath .env -Encoding UTF8
+
+# 6. Add to PowerShell profile
+Add-Content -Path $PROFILE -Value '. "$HOME\antigravity-CC\anticc.ps1"'
+
+# 7. Reload and start
+. .\anticc.ps1
+anticc-start
+& "$env:LOCALAPPDATA\Programs\CLIProxyAPI\cliproxyapi.exe" --antigravity-login
+```
+
+### Windows Commands
+
+All the same commands work in PowerShell:
+
+```powershell
+anticc-on              # Enable Antigravity mode (set env vars)
+anticc-off             # Disable Antigravity mode (unset env vars)
+anticc-status          # Show status
+anticc-login           # Login to Antigravity (add Google account)
+anticc-update          # Update to latest version
+anticc-diagnose        # Full diagnostics
+anticc-help            # Show all commands
+```
+
+### Windows Startup Commands
+
+```powershell
+anticc-enable-startup    # Start CLIProxyAPI on Windows login
+anticc-disable-startup   # Disable startup on login
+```
+
+**Note:** Windows connects directly to CLIProxyAPI (no CCR required). The architecture is simpler:
+```
+Claude Code -> CLIProxyAPI (8317) -> Antigravity -> Google AI
+```
+
+### Windows Files
+
+| File | Location |
+|------|----------|
+| Binary | `%LOCALAPPDATA%\Programs\CLIProxyAPI\cliproxyapi.exe` |
+| Source | `<repo>\cliproxy-source\` |
+| Config | `<repo>\config.yaml` |
+| Logs | `%LOCALAPPDATA%\CLIProxyAPI\logs\` |
+| Updater | `<repo>\cliproxy-updater.ps1` |
+
+### Windows Task Scheduler
+
+| Task | Description |
+|------|-------------|
+| `CLIProxyAPI-Startup` | Starts CLIProxyAPI on login |
+| `CLIProxyAPI-AutoUpdate` | Auto-updates every 12 hours |
+
+### Uninstalling (Windows)
+
+```powershell
+.\setup-windows.ps1 -Uninstall
+```
+
+Or manually:
+
+```powershell
+# Stop service
+Stop-Process -Name cliproxyapi -Force
+
+# Remove scheduled tasks
+Unregister-ScheduledTask -TaskName "CLIProxyAPI-Startup" -Confirm:$false
+Unregister-ScheduledTask -TaskName "CLIProxyAPI-AutoUpdate" -Confirm:$false
+
+# Remove files
+Remove-Item "$env:LOCALAPPDATA\Programs\CLIProxyAPI" -Recurse -Force
+Remove-Item "$env:LOCALAPPDATA\CLIProxyAPI" -Recurse -Force
+
+# Remove from PowerShell profile (edit $PROFILE manually)
+```
 
 ---
 
@@ -245,6 +373,7 @@ CLIProxyAPI is built from source and auto-updated every 12 hours:
 |----------|------------|-------------|
 | **macOS** | launchd (`com.cliproxy.api.plist`) | launchd timer (`com.cliproxy.updater.plist`) |
 | **Linux** | systemd (`cliproxy.service`) or manual | cron job (every 12h) |
+| **Windows** | Task Scheduler (`CLIProxyAPI-Startup`) | Task Scheduler (`CLIProxyAPI-AutoUpdate`) |
 
 ### Why Build from Source?
 
@@ -270,10 +399,18 @@ CLIProxyAPI is built from source and auto-updated every 12 hours:
 
 Add multiple Google accounts to increase rate limits:
 
+**macOS/Linux:**
 ```bash
 ~/.local/bin/cliproxyapi --antigravity-login  # Add account 1
 ~/.local/bin/cliproxyapi --antigravity-login  # Add account 2
 ~/.local/bin/cliproxyapi --antigravity-login  # Add account 3
+```
+
+**Windows:**
+```powershell
+anticc-login  # Add account 1
+anticc-login  # Add account 2
+anticc-login  # Add account 3
 ```
 
 CLIProxyAPI rotates through accounts automatically when one hits rate limits.
@@ -282,7 +419,7 @@ CLIProxyAPI rotates through accounts automatically when one hits rate limits.
 
 ## MCP Servers
 
-CCR handles model routing so MCP servers work with Antigravity/Gemini backends.
+MCP servers work with Antigravity/Gemini backends. On macOS/Linux, CCR handles model routing. On Windows, CLIProxyAPI handles this directly.
 
 ### Supported MCP Servers
 
@@ -383,7 +520,10 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="gemini-3-flash-preview"
 | `anticc.sh` | Shell commands and environment setup |
 | `cliproxy-updater.sh` | Auto-update script (pull, build, deploy, rollback) |
 | `cliproxy-source/` | CLIProxyAPI source repository |
-| `setup.sh` | One-command setup script |
+| `setup.sh` | One-command setup script (macOS/Linux) |
+| `setup-windows.ps1` | One-command setup script (Windows) |
+| `anticc.ps1` | PowerShell commands and environment setup (Windows) |
+| `cliproxy-updater.ps1` | Auto-update script for Windows |
 | `~/.claude-code-router/config.json` | CCR configuration (created by setup) |
 
 ### macOS: Launchd Plists
@@ -406,6 +546,8 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="gemini-3-flash-preview"
 |----------|--------------|
 | **macOS/Linux** | `~/.local/var/log/cliproxyapi.log` |
 | **macOS/Linux** | `~/.local/var/log/cliproxy-updater.log` |
+| **Windows** | `%LOCALAPPDATA%\CLIProxyAPI\logs\cliproxyapi.log` |
+| **Windows** | `%LOCALAPPDATA%\CLIProxyAPI\logs\cliproxy-updater.log` |
 
 ---
 
@@ -413,8 +555,9 @@ export ANTHROPIC_DEFAULT_HAIKU_MODEL="gemini-3-flash-preview"
 
 ### Check service status
 
+**All platforms:**
 ```bash
-anticc-status   # Shows CLIProxyAPI, CCR, and profile status
+anticc-status   # Shows CLIProxyAPI and profile status
 anticc-diagnose # Full diagnostics
 anticc-version  # Compare running vs source versions
 ```
@@ -430,8 +573,14 @@ anticc-start     # Restart service
 
 Add more Google accounts:
 
+**macOS/Linux:**
 ```bash
 ~/.local/bin/cliproxyapi --antigravity-login
+```
+
+**Windows:**
+```powershell
+anticc-login
 ```
 
 ### Model not found
@@ -448,9 +597,29 @@ go version
 
 ### Check logs
 
+**macOS/Linux:**
 ```bash
 tail -50 ~/.local/var/log/cliproxyapi.log
 tail -50 ~/.local/var/log/cliproxy-updater.log
+```
+
+**Windows (PowerShell):**
+```powershell
+Get-Content "$env:LOCALAPPDATA\CLIProxyAPI\logs\cliproxyapi.log" -Tail 50
+Get-Content "$env:LOCALAPPDATA\CLIProxyAPI\logs\cliproxy-updater.log" -Tail 50
+```
+
+### Windows: Task Scheduler issues
+
+If scheduled tasks aren't working, re-run setup as Administrator:
+
+```powershell
+# Run PowerShell as Administrator
+.\setup-windows.ps1
+
+# Or manually create tasks
+anticc-enable-startup
+anticc-enable-autoupdate
 ```
 
 ### Linux: Manually start on boot
