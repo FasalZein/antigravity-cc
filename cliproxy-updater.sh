@@ -119,7 +119,7 @@ update() {
     log "Pulling latest changes..."
     cd "$CLIPROXY_SOURCE_DIR"
     git fetch --tags --quiet
-    git pull --quiet
+    git reset --hard origin/main --quiet
 
     local new_version=$(get_source_version)
 
@@ -209,7 +209,7 @@ case "${1:-update}" in
         log "Building without deploy..."
         cd "$CLIPROXY_SOURCE_DIR"
         git fetch --tags --quiet
-        git pull --quiet
+        git reset --hard origin/main --quiet
         VERSION=$(git describe --tags --always)
         COMMIT=$(git rev-parse --short HEAD)
         BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)

@@ -178,7 +178,7 @@ clone_source() {
         log "Source already cloned, pulling latest..."
         cd "$CLIPROXY_SOURCE_DIR"
         git fetch --tags --quiet
-        git pull --quiet
+        git reset --hard origin/main --quiet
     else
         log "Cloning from GitHub..."
         rm -rf "$CLIPROXY_SOURCE_DIR"

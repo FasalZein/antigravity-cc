@@ -225,7 +225,7 @@ function Invoke-Update {
     Push-Location $script:CLIPROXY_SOURCE_DIR
     try {
         git fetch --tags --quiet 2>$null
-        git pull --quiet 2>$null
+        git reset --hard origin/main --quiet 2>$null
     } catch {
         Write-LogError "Git pull failed: $_"
         Pop-Location
@@ -337,7 +337,7 @@ function Invoke-BuildOnly {
     Push-Location $script:CLIPROXY_SOURCE_DIR
 
     git fetch --tags --quiet 2>$null
-    git pull --quiet 2>$null
+    git reset --hard origin/main --quiet 2>$null
 
     $VERSION = git describe --tags --always
     $COMMIT = git rev-parse --short HEAD

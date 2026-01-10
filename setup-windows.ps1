@@ -179,7 +179,7 @@ function Initialize-Source {
         Write-SubStep "Source directory exists, updating..."
         Push-Location $script:SOURCE_DIR
         git fetch --tags --quiet
-        git pull --quiet
+        git reset --hard origin/main --quiet
         Pop-Location
     } else {
         Write-SubStep "Cloning from $($script:REPO_URL)..."
