@@ -137,8 +137,9 @@ update() {
     local VERSION=$(git describe --tags --always)
     local COMMIT=$(git rev-parse --short HEAD)
     local BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    local DEFAULT_CONFIG="$CLIPROXY_CONFIG"
 
-    if ! go build -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE" -o cliproxyapi.new ./cmd/server 2>>"$LOG_FILE"; then
+    if ! go build -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG" -o cliproxyapi.new ./cmd/server 2>>"$LOG_FILE"; then
         log_error "Build failed"
         rm -f cliproxyapi.new
         return 1
@@ -213,7 +214,8 @@ case "${1:-update}" in
         VERSION=$(git describe --tags --always)
         COMMIT=$(git rev-parse --short HEAD)
         BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        go build -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE" -o cliproxyapi ./cmd/server
+        DEFAULT_CONFIG="$CLIPROXY_CONFIG"
+        go build -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG" -o cliproxyapi ./cmd/server
         log "Built $VERSION"
         ;;
     *)

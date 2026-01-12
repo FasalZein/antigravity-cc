@@ -258,8 +258,9 @@ function Invoke-Update {
     $VERSION = git describe --tags --always
     $COMMIT = git rev-parse --short HEAD
     $BUILD_DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $DEFAULT_CONFIG = $script:CONFIG_FILE
 
-    $ldflags = "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE"
+    $ldflags = "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG"
 
     try {
         $env:CGO_ENABLED = "0"
@@ -342,8 +343,9 @@ function Invoke-BuildOnly {
     $VERSION = git describe --tags --always
     $COMMIT = git rev-parse --short HEAD
     $BUILD_DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $DEFAULT_CONFIG = $script:CONFIG_FILE
 
-    $ldflags = "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE"
+    $ldflags = "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG"
 
     try {
         $env:CGO_ENABLED = "0"

@@ -205,11 +205,12 @@ build_cliproxy() {
     VERSION=$(git describe --tags --always)
     COMMIT=$(git rev-parse --short HEAD)
     BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+    DEFAULT_CONFIG="$SCRIPT_DIR/config.yaml"
 
     log "Building $VERSION ($COMMIT)..."
 
     go build \
-        -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE" \
+        -ldflags "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG" \
         -o "$CLIPROXY_BIN" \
         ./cmd/server
 

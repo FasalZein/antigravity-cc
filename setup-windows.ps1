@@ -212,7 +212,8 @@ function Build-Binary {
     Write-SubStep "Version: $VERSION"
     Write-SubStep "Commit: $COMMIT"
 
-    $ldflags = "-s -w -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE"
+    $DEFAULT_CONFIG = Join-Path $script:INSTALL_DIR "config.yaml"
+    $ldflags = "-s -w -X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG"
 
     $env:CGO_ENABLED = "0"
     $env:GOOS = "windows"
