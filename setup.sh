@@ -574,7 +574,14 @@ start_services() {
     if pgrep -f "claude-code-router" >/dev/null 2>&1; then
         log "CCR already running"
     else
-        ccr start 2>/dev/null || warn "CCR may need manual start: ccr start"
+        # Run ccr start in background with timeout to prevent hanging
+        timeout 5 ccr start >/dev/null 2>&1 &
+        sleep 2
+        if pgrep -f "claude-code-router" >/dev/null 2>&1; then
+            log "CCR started"
+        else
+            warn "CCR may need manual start: ccr start"
+        fi
     fi
 
     echo ""
