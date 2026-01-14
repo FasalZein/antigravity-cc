@@ -258,13 +258,13 @@ function Invoke-Update {
     $VERSION = git describe --tags --always
     $COMMIT = git rev-parse --short HEAD
     $BUILD_DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    $DEFAULT_CONFIG = $script:CONFIG_FILE
+    $DEFAULT_CONFIG = $script:CLIPROXY_CONFIG
 
-    $ldflags = "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG"
+    $ldflags = "-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildDate=$BUILD_DATE' -X 'main.DefaultConfigPath=$DEFAULT_CONFIG'"
 
     try {
         $env:CGO_ENABLED = "0"
-        go build -ldflags $ldflags -o "cliproxyapi.new.exe" ./cmd/server 2>&1 | Tee-Object -FilePath $script:LOG_FILE -Append
+        go build -ldflags "$ldflags" -o "cliproxyapi.new.exe" ./cmd/server 2>&1 | Tee-Object -FilePath $script:LOG_FILE -Append
         if (-not (Test-Path "cliproxyapi.new.exe")) {
             throw "Build output not found"
         }
@@ -343,13 +343,13 @@ function Invoke-BuildOnly {
     $VERSION = git describe --tags --always
     $COMMIT = git rev-parse --short HEAD
     $BUILD_DATE = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-    $DEFAULT_CONFIG = $script:CONFIG_FILE
+    $DEFAULT_CONFIG = $script:CLIPROXY_CONFIG
 
-    $ldflags = "-X main.Version=$VERSION -X main.Commit=$COMMIT -X main.BuildDate=$BUILD_DATE -X main.DefaultConfigPath=$DEFAULT_CONFIG"
+    $ldflags = "-X 'main.Version=$VERSION' -X 'main.Commit=$COMMIT' -X 'main.BuildDate=$BUILD_DATE' -X 'main.DefaultConfigPath=$DEFAULT_CONFIG'"
 
     try {
         $env:CGO_ENABLED = "0"
-        go build -ldflags $ldflags -o "cliproxyapi.exe" ./cmd/server
+        go build -ldflags "$ldflags" -o "cliproxyapi.exe" ./cmd/server
         Write-Log "Built $VERSION"
     } catch {
         Write-LogError "Build failed: $_"
