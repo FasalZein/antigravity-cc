@@ -88,20 +88,25 @@ func detectConfig() *Config {
 		LogDir:     logDir,
 	}
 
-	// Get API key from environment
-	cfg.APIKey = os.Getenv("CLIPROXY_API_KEY")
-	if cfg.APIKey == "" {
-		// Try loading from .env file
-		envFile := filepath.Join(baseDir, ".env")
-		if data, err := os.ReadFile(envFile); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if strings.HasPrefix(line, "CLIPROXY_API_KEY=") {
-					cfg.APIKey = strings.TrimPrefix(line, "CLIPROXY_API_KEY=")
-					cfg.APIKey = strings.Trim(cfg.APIKey, "\"'")
-					break
-				}
+	// Get API key - .env file takes precedence over environment variable
+	// Default to "dummy" if neither is set
+	envFile := filepath.Join(baseDir, ".env")
+	if data, err := os.ReadFile(envFile); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.HasPrefix(line, "CLIPROXY_API_KEY=") {
+				cfg.APIKey = strings.TrimPrefix(line, "CLIPROXY_API_KEY=")
+				cfg.APIKey = strings.Trim(cfg.APIKey, "\"'")
+				break
 			}
 		}
+	}
+	// Fall back to environment variable if not in .env
+	if cfg.APIKey == "" {
+		cfg.APIKey = os.Getenv("CLIPROXY_API_KEY")
+	}
+	// Final fallback to "dummy"
+	if cfg.APIKey == "" {
+		cfg.APIKey = "dummy"
 	}
 
 	return cfg

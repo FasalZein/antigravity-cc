@@ -36,8 +36,18 @@ $script:CLIPROXY_UPDATER = Join-Path $script:ANTICC_DIR "cliproxy-updater.ps1"
 $script:CLIPROXY_LOG_DIR = Join-Path $env:LOCALAPPDATA "CLIProxyAPI\logs"
 $script:CLIPROXY_CTL = Join-Path $script:ANTICC_DIR "tools\cliproxyctl\cliproxyctl.exe"
 
-# API key - defaults to "dummy" for local-only services
-# User can override by setting CLIPROXY_API_KEY before sourcing this script
+# API key - .env file takes precedence, then env var, then "dummy" default
+$envFile = Join-Path $script:ANTICC_DIR ".env"
+if (Test-Path $envFile) {
+    $envContent = Get-Content $envFile -ErrorAction SilentlyContinue
+    $keyLine = $envContent | Where-Object { $_ -match '^CLIPROXY_API_KEY=' } | Select-Object -First 1
+    if ($keyLine) {
+        $envKey = ($keyLine -replace '^CLIPROXY_API_KEY=', '') -replace '["\x27]', ''
+        if ($envKey) {
+            $env:CLIPROXY_API_KEY = $envKey
+        }
+    }
+}
 if (-not $env:CLIPROXY_API_KEY) {
     $env:CLIPROXY_API_KEY = "dummy"
 }

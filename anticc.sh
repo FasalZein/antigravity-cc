@@ -35,8 +35,13 @@ export CLIPROXY_DIR="${CLIPROXY_DIR:-$ANTICC_DIR}"
 CLIPROXY_BIN_DIR="${HOME}/.local/bin"
 CLIPROXY_CTL="${ANTICC_DIR}/tools/cliproxyctl/cliproxyctl"
 
-# API key - defaults to "dummy" for local-only services
-# User can override by setting CLIPROXY_API_KEY before sourcing this script
+# API key - .env file takes precedence, then env var, then "dummy" default
+if [[ -f "${ANTICC_DIR}/.env" ]]; then
+    _env_key=$(grep -E '^CLIPROXY_API_KEY=' "${ANTICC_DIR}/.env" 2>/dev/null | cut -d= -f2- | tr -d '"'"'")
+    if [[ -n "$_env_key" ]]; then
+        export CLIPROXY_API_KEY="$_env_key"
+    fi
+fi
 export CLIPROXY_API_KEY="${CLIPROXY_API_KEY:-dummy}"
 
 # Internal settings (exported when anticc-on is called)
