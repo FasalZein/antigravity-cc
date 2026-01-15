@@ -8,10 +8,17 @@
 
 set -euo pipefail
 
-# Configuration
-CLIPROXY_SOURCE_DIR="${CLIPROXY_SOURCE_DIR:-$HOME/Dev/Code Forge/CLIProxyAPI/cliproxy-source}"
+# Detect script directory (works when sourced or executed)
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+else
+    SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+fi
+
+# Configuration - paths relative to script directory
+CLIPROXY_SOURCE_DIR="${CLIPROXY_SOURCE_DIR:-$SCRIPT_DIR/cliproxy-source}"
 CLIPROXY_BIN_DIR="${CLIPROXY_BIN_DIR:-$HOME/.local/bin}"
-CLIPROXY_CONFIG="${CLIPROXY_CONFIG:-$HOME/Dev/Code Forge/CLIProxyAPI/config.yaml}"
+CLIPROXY_CONFIG="${CLIPROXY_CONFIG:-$SCRIPT_DIR/config.yaml}"
 CLIPROXY_PORT="${CLIPROXY_PORT:-8317}"
 CLIPROXY_API_KEY="${CLIPROXY_API_KEY:-}"
 LOG_FILE="${HOME}/.local/var/log/cliproxy-updater.log"
@@ -80,6 +87,22 @@ start_cliproxy() {
     sleep 3
 }
 
+# Restart CCR (Claude Code Router)
+restart_ccr() {
+    if command -v ccr &>/dev/null; then
+        log "Restarting CCR..."
+        pkill -f "claude-code-router" 2>/dev/null || true
+        sleep 1
+        ccr start &>/dev/null &
+        sleep 2
+        if pgrep -f "claude-code-router" >/dev/null 2>&1; then
+            log "CCR restarted"
+        else
+            log "CCR failed to start (may need manual: ccr start)"
+        fi
+    fi
+}
+
 # Rollback to backup
 rollback() {
     log_error "Rolling back to previous version..."
@@ -109,8 +132,8 @@ update() {
     log "=== CLIProxyAPI Auto-Update Started ==="
 
     # Load API key from .env if not set
-    if [[ -z "$CLIPROXY_API_KEY" && -f "$HOME/Dev/Code Forge/CLIProxyAPI/.env" ]]; then
-        source "$HOME/Dev/Code Forge/CLIProxyAPI/.env"
+    if [[ -z "$CLIPROXY_API_KEY" && -f "$SCRIPT_DIR/.env" ]]; then
+        source "$SCRIPT_DIR/.env"
     fi
 
     local old_version=$(get_source_version)
@@ -164,6 +187,8 @@ update() {
     if health_check; then
         log "Update successful: $new_version"
         rm -f "${CLIPROXY_BIN_DIR}/cliproxyapi.failed"
+        # Restart CCR to pick up any changes
+        restart_ccr
         # Send success notification
         command -v terminal-notifier >/dev/null && \
             terminal-notifier -title "CLIProxyAPI" -message "Updated to $new_version" -sound default 2>/dev/null || true

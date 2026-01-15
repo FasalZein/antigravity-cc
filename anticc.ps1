@@ -5,12 +5,14 @@
 #   Or add to your PowerShell profile: $PROFILE
 #
 # Commands:
-#   anticc-on       Enable Antigravity mode (set env vars)
-#   anticc-off      Disable Antigravity mode (unset env vars)
-#   anticc-status   Check current profile status
-#   anticc-update   Pull latest source and rebuild CLIProxyAPI
-#   anticc-rollback Rollback to previous version if update fails
-#   anticc-version  Show version info (running, binary, source)
+#   anticc-on         Enable Antigravity mode (set env vars)
+#   anticc-off        Disable Antigravity mode (unset env vars)
+#   anticc-status     Check current profile status
+#   anticc-update     Pull latest source and rebuild CLIProxyAPI
+#   anticc-rollback   Rollback to previous version if update fails
+#   anticc-version    Show version info (running, binary, source)
+#   anticc-quota      Check quota for all accounts (CLI)
+#   anticc-quota-web  Open quota dashboard in browser
 #
 # CLIProxyAPI is built from source and auto-updated via Task Scheduler.
 # Windows version connects directly to CLIProxyAPI (no CCR needed).
@@ -520,6 +522,75 @@ function anticc-diagnose {
 }
 
 # ============================================================================
+# QUOTA TOOLS
+# ============================================================================
+
+function anticc-quota {
+    <#
+    .SYNOPSIS
+    Check Antigravity quota for all accounts (CLI mode by default)
+    .PARAMETER Web
+    Start web server with dashboard
+    .PARAMETER Port
+    Port for web server (default: 8318)
+    #>
+    param(
+        [switch]$Web,
+        [int]$Port = 8318
+    )
+
+    $toolDir = Join-Path $script:ANTICC_DIR "tools\check-quota"
+    $binary = Join-Path $toolDir "check-quota.exe"
+    $sourceFile = Join-Path $toolDir "main.go"
+
+    # Build if not exists or source is newer
+    $needsBuild = $false
+    if (-not (Test-Path $binary)) {
+        $needsBuild = $true
+    } elseif ((Test-Path $sourceFile) -and ((Get-Item $sourceFile).LastWriteTime -gt (Get-Item $binary).LastWriteTime)) {
+        $needsBuild = $true
+    }
+
+    if ($needsBuild) {
+        Write-Log "Building check-quota tool..."
+        if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+            Write-Warn "Go not installed. Install Go to use this feature."
+            return
+        }
+        Push-Location $toolDir
+        try {
+            go build -o check-quota.exe .
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warn "Failed to build check-quota tool"
+                return
+            }
+        } finally {
+            Pop-Location
+        }
+    }
+
+    if ($Web) {
+        Write-Log "Starting quota dashboard on http://127.0.0.1:$Port"
+        & $binary --web --port $Port
+    } else {
+        & $binary
+    }
+}
+
+function anticc-quota-web {
+    <#
+    .SYNOPSIS
+    Open quota dashboard in browser (web UI mode)
+    .PARAMETER Port
+    Port for web server (default: 8318)
+    #>
+    param(
+        [int]$Port = 8318
+    )
+    anticc-quota -Web -Port $Port
+}
+
+# ============================================================================
 # HELP
 # ============================================================================
 
@@ -572,15 +643,20 @@ Startup:
   anticc-enable-startup      Start CLIProxyAPI on Windows login
   anticc-disable-startup     Disable startup on login
 
+Quota Commands:
+  anticc-quota           Check Antigravity quota for all accounts (CLI)
+  anticc-quota -Web      Open quota dashboard in browser
+  anticc-quota-web [port] Open quota dashboard (default port: 8318)
+
 Diagnostics:
   anticc-diagnose        Run full diagnostics
   anticc-help            Show this help
 
 Files:
-  Binary:   $env:LOCALAPPDATA\Programs\CLIProxyAPI\cliproxyapi.exe
+  Binary:   `$env:LOCALAPPDATA\Programs\CLIProxyAPI\cliproxyapi.exe
   Source:   $($script:CLIPROXY_SOURCE_DIR)
-  Config:   $env:CLIPROXY_DIR\config.yaml
-  Logs:     $env:LOCALAPPDATA\CLIProxyAPI\logs\cliproxyapi.log
+  Config:   `$env:CLIPROXY_DIR\config.yaml
+  Logs:     `$env:LOCALAPPDATA\CLIProxyAPI\logs\cliproxyapi.log
   Updater:  $($script:CLIPROXY_UPDATER)
 
 Environment variables are auto-exported when sourced (for IDE plugins).

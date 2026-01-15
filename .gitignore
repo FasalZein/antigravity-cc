@@ -36,3 +36,11 @@ middleware/cliproxy-middleware
 middleware/middleware-proxy
 issue_streaming_token_count.md
 .osgrep
+
+# Tools - compiled binaries (keep source, ignore binaries)
+tools/check-quota/check-quota
+tools/check-status/
+
+# Cloned source directories (independent git repos)
+cliproxy-source/
+quotio/

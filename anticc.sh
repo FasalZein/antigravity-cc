@@ -5,12 +5,14 @@
 # Usage: source "/path/to/anticc.sh"
 #
 # Commands:
-#   anticc-on       Enable Antigravity mode (set env vars)
-#   anticc-off      Disable Antigravity mode (unset env vars)
-#   anticc-status   Check current profile status
-#   anticc-update   Pull latest source and rebuild CLIProxyAPI
-#   anticc-rollback Rollback to previous version if update fails
-#   anticc-version  Show version info (running, binary, source)
+#   anticc-on         Enable Antigravity mode (set env vars)
+#   anticc-off        Disable Antigravity mode (unset env vars)
+#   anticc-status     Check current profile status
+#   anticc-update     Pull latest source and rebuild CLIProxyAPI
+#   anticc-rollback   Rollback to previous version if update fails
+#   anticc-version    Show version info (running, binary, source)
+#   anticc-quota      Check quota for all accounts (CLI)
+#   anticc-quota-web  Open quota dashboard in browser
 #
 # CLIProxyAPI is built from source and auto-updated every 12 hours.
 # Services are managed via launchd (not brew).
@@ -434,11 +436,43 @@ anticc-diagnose() {
 }
 
 # ============================================================================
+# QUOTA TOOLS
+# ============================================================================
+
+# Check Antigravity quota for all accounts (CLI mode)
+anticc-quota() {
+    local tool_dir="$ANTICC_DIR/tools/check-quota"
+    local binary="$tool_dir/check-quota"
+    
+    # Build if not exists or source is newer
+    if [[ ! -x "$binary" ]] || [[ "$tool_dir/main.go" -nt "$binary" ]]; then
+        _log "Building check-quota tool..."
+        if ! command -v go &>/dev/null; then
+            _warn "Go not installed. Install Go to use this feature."
+            return 1
+        fi
+        (cd "$tool_dir" && go build -o check-quota .) || {
+            _warn "Failed to build check-quota tool"
+            return 1
+        }
+    fi
+    
+    "$binary" "$@"
+}
+
+# Open quota dashboard in browser (web UI mode)
+anticc-quota-web() {
+    local port="${1:-8318}"
+    _log "Starting quota dashboard on http://127.0.0.1:$port"
+    anticc-quota --web --port "$port"
+}
+
+# ============================================================================
 # HELP
 # ============================================================================
 
 anticc-help() {
-    cat << 'EOF'
+    cat << EOF
 anticc - Antigravity Claude Code CLI
 
 Architecture:
@@ -463,15 +497,19 @@ Auto-Update:
   anticc-enable-autoupdate   Enable 12-hour auto-update via launchd
   anticc-disable-autoupdate  Disable auto-update
 
+Quota Commands:
+  anticc-quota           Check Antigravity quota for all accounts (CLI)
+  anticc-quota-web [port] Open quota dashboard in browser (default: 8318)
+
 Diagnostics:
   anticc-diagnose        Run full diagnostics
 
 Files:
   Binary:   ~/.local/bin/cliproxyapi
-  Source:   ~/Dev/Code Forge/CLIProxyAPI/cliproxy-source
-  Config:   ~/Dev/Code Forge/CLIProxyAPI/config.yaml
+  Source:   $ANTICC_DIR/cliproxy-source
+  Config:   $ANTICC_DIR/config.yaml
   Logs:     ~/.local/var/log/cliproxyapi.log
-  Updater:  ~/Dev/Code Forge/CLIProxyAPI/cliproxy-updater.sh
+  Updater:  $ANTICC_DIR/cliproxy-updater.sh
 
 Environment variables are auto-exported when sourced (for IDE plugins).
 To disable: export ANTICC_AUTO_ENABLE=false before sourcing.
