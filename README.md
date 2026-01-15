@@ -16,15 +16,15 @@ Claude Code → CCR (3456) → CLIProxyAPI (8317) → Antigravity → Google AI
 ## Quick Start
 
 ```bash
-git clone https://github.com/YourUsername/antigravity-CC.git ~/antigravity-CC
-cd ~/antigravity-CC
+git clone https://github.com/FasalZein/antigravity-cc.git ~/antigravity-cc
+cd ~/antigravity-cc
 ./setup.sh
 ```
 
 **Windows:**
 ```powershell
-git clone https://github.com/YourUsername/antigravity-CC.git $HOME\antigravity-CC
-cd $HOME\antigravity-CC
+git clone https://github.com/FasalZein/antigravity-cc.git $HOME\antigravity-cc
+cd $HOME\antigravity-cc
 .\setup-windows.ps1
 ```
 
@@ -234,7 +234,7 @@ brew services stop cliproxyapi
 brew uninstall cliproxyapi
 
 # Run new setup
-cd ~/antigravity-CC
+cd ~/antigravity-cc
 git pull
 ./setup.sh
 ```
@@ -251,7 +251,7 @@ launchctl unload ~/Library/LaunchAgents/com.cliproxy.api.plist
 launchctl unload ~/Library/LaunchAgents/com.cliproxy.updater.plist
 rm ~/Library/LaunchAgents/com.cliproxy.*.plist
 rm ~/.local/bin/cliproxyapi
-rm -rf ~/antigravity-CC
+rm -rf ~/antigravity-cc
 # Remove 'source anticc.sh' from ~/.zshrc
 ```
 
@@ -262,7 +262,7 @@ anticc-stop-service
 systemctl --user disable cliproxyapi
 crontab -l | grep -v cliproxy | crontab -
 rm ~/.local/bin/cliproxyapi
-rm -rf ~/antigravity-CC
+rm -rf ~/antigravity-cc
 # Remove 'source anticc.sh' from ~/.bashrc
 ```
 
