@@ -1,0 +1,124 @@
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+	/* Surface colors */
+	--color-surface-0: #09090b;
+	--color-surface-1: #0f0f12;
+	--color-surface-2: #18181b;
+	--color-surface-3: #1f1f23;
+	--color-surface-4: #27272a;
+	
+	/* Accent colors */
+	--color-accent-primary: #6366f1;
+	--color-accent-secondary: #8b5cf6;
+	--color-accent-glow: rgba(99, 102, 241, 0.15);
+	
+	/* Status colors */
+	--color-status-healthy: #10b981;
+	--color-status-caution: #f59e0b;
+	--color-status-critical: #ef4444;
+	
+	/* Text colors */
+	--color-text-primary: #fafafa;
+	--color-text-secondary: #a1a1aa;
+	--color-text-muted: #52525b;
+}
+
+* { font-family: 'Outfit', sans-serif; }
+.font-mono { font-family: 'Space Mono', monospace !important; }
+
+body {
+	background-color: var(--color-surface-0);
+	color: var(--color-text-primary);
+	min-height: 100vh;
+}
+
+/* Glassmorphism */
+.glass {
+	background: rgba(15, 15, 18, 0.8);
+	backdrop-filter: blur(12px);
+	border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-card {
+	background: linear-gradient(135deg, rgba(24, 24, 27, 0.9) 0%, rgba(15, 15, 18, 0.95) 100%);
+	backdrop-filter: blur(8px);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Progress animations */
+.progress-fill { 
+	transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); 
+}
+
+.ring-progress { 
+	transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); 
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0f0f12; }
+::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+/* Tab transitions */
+.tab-btn { 
+	transition: all 0.2s ease; 
+}
+
+.tab-btn.active {
+	background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+	border-color: rgba(99, 102, 241, 0.4);
+}
+
+/* Countdown ring */
+.countdown-ring { 
+	transform: rotate(-90deg); 
+	transform-origin: center; 
+}
+
+/* Card hover - subtle, no transform */
+.account-card {
+	transition: box-shadow 0.2s ease;
+}
+
+.account-card:hover {
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* Email blur */
+.blur-email { 
+	filter: blur(6px); 
+	user-select: none; 
+}
+
+/* Modal */
+.modal-backdrop { 
+	background: rgba(0, 0, 0, 0.85); 
+	backdrop-filter: blur(8px); 
+}
+
+.modal-enter { 
+	animation: modal-in 0.2s ease-out; 
+}
+
+@keyframes modal-in {
+	from { opacity: 0; transform: scale(0.96) translateY(8px); }
+	to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* Subtle glow */
+.glow-ring {
+	box-shadow: 0 0 20px rgba(99, 102, 241, 0.1), inset 0 0 20px rgba(99, 102, 241, 0.05);
+}
+
+/* Refresh spin */
+.spin {
+	animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}

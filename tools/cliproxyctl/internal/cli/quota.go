@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"net/http"
 	"os"
@@ -17,7 +16,7 @@ import (
 	"sync"
 	"time"
 
-	"cliproxyctl/web"
+	"cliproxyctl/dashboard"
 	"github.com/spf13/cobra"
 )
 
@@ -154,6 +153,15 @@ type DashboardData struct {
 	TotalCodex      int                 `json:"totalCodex"`
 }
 
+// APIResponse for JSON API (SvelteKit frontend)
+type APIResponse struct {
+	Accounts         []AccountQuota      `json:"accounts"`
+	CodexAccounts    []CodexAccountQuota `json:"codexAccounts"`
+	TotalAntigravity int                 `json:"totalAntigravity"`
+	TotalCodex       int                 `json:"totalCodex"`
+	LastUpdated      string              `json:"lastUpdated"`
+}
+
 var (
 	quotaWebMode     bool
 	quotaPort        int
@@ -249,94 +257,91 @@ func runQuotaCLI() error {
 // ============================================================================
 
 func startQuotaWebServer() error {
-	// Parse templates
-	tmpl, err := template.New("").Funcs(template.FuncMap{
-		"json": func(v interface{}) template.JS {
-			b, _ := json.Marshal(v)
-			return template.JS(b)
-		},
-		"multiply": func(a, b int) int {
-			return a * b
-		},
-		"minus": func(a, b float64) float64 {
-			return a - b
-		},
-		"ringOffset": func(percent float64) float64 {
-			// Calculate stroke-dashoffset: 150.8 * (1 - percent/100)
-			return 150.8 * (1.0 - percent/100.0)
-		},
-	}).ParseFS(web.Assets, "templates/*.html")
-	if err != nil {
-		return fmt.Errorf("error parsing templates: %w", err)
-	}
-
 	mux := http.NewServeMux()
 
-	// Static files (logos, JS, etc.)
-	mux.HandleFunc("/static/", func(w http.ResponseWriter, r *http.Request) {
-		// Strip /static/ prefix
-		fileName := strings.TrimPrefix(r.URL.Path, "/static/")
-		if fileName == "" {
-			http.NotFound(w, r)
-			return
-		}
-
-		// Try static/images first, then static/js
-		var content []byte
-		var err error
-		var contentType string
-
-		switch {
-		case strings.HasSuffix(fileName, ".js"):
-			content, err = web.Assets.ReadFile("static/js/" + fileName)
-			contentType = "application/javascript"
-		case strings.HasSuffix(fileName, ".svg"):
-			content, err = web.Assets.ReadFile("static/images/" + fileName)
-			contentType = "image/svg+xml"
-		case strings.HasSuffix(fileName, ".avif"):
-			content, err = web.Assets.ReadFile("static/images/" + fileName)
-			contentType = "image/avif"
-		case strings.HasSuffix(fileName, ".png"):
-			content, err = web.Assets.ReadFile("static/images/" + fileName)
-			contentType = "image/png"
-		case strings.HasSuffix(fileName, ".jpg"), strings.HasSuffix(fileName, ".jpeg"):
-			content, err = web.Assets.ReadFile("static/images/" + fileName)
-			contentType = "image/jpeg"
-		default:
-			content, err = web.Assets.ReadFile("static/images/" + fileName)
-			contentType = "application/octet-stream"
-		}
-
-		if err != nil {
-			http.NotFound(w, r)
-			return
-		}
-
-		w.Header().Set("Content-Type", contentType)
-		w.Header().Set("Cache-Control", "public, max-age=86400")
-		w.Write(content)
-	})
-
-	// Routes
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		data := getQuotaData()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		if err := tmpl.ExecuteTemplate(w, "index.html", data); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-
+	// API endpoint
 	mux.HandleFunc("/api/quota", func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		
+		// CORS for development
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		forceRefresh := r.URL.Query().Get("refresh") == "true"
+		
 		// Force refresh if requested
-		if r.URL.Query().Get("refresh") == "true" {
+		if forceRefresh {
 			quotaCacheMu.Lock()
 			quotaCachedData = nil
 			quotaCacheMu.Unlock()
+			fmt.Printf("   [API] Force refresh requested\n")
 		}
 
 		data := getQuotaData()
+		
+		// Convert to API response format
+		apiResp := convertToAPIResponse(data)
+		
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(data)
+		json.NewEncoder(w).Encode(apiResp)
+		
+		fmt.Printf("   [API] /api/quota took %v (accounts=%d, codex=%d, cached=%v)\n", 
+			time.Since(start).Round(time.Millisecond), 
+			len(data.Accounts), len(data.CodexAccounts), !forceRefresh && quotaCachedData != nil)
+	})
+
+	// Serve SvelteKit build files
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+		if path == "/" {
+			path = "/index.html"
+		}
+
+		// Try to read the file from the embedded dashboard build
+		filePath := "build" + path
+		content, err := dashboard.Assets.ReadFile(filePath)
+		if err != nil {
+			// Fallback to index.html for SPA routing
+			content, err = dashboard.Assets.ReadFile("build/index.html")
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			path = "/index.html"
+		}
+
+		// Set content type based on extension
+		contentType := "application/octet-stream"
+		switch {
+		case strings.HasSuffix(path, ".html"):
+			contentType = "text/html; charset=utf-8"
+		case strings.HasSuffix(path, ".js"):
+			contentType = "application/javascript"
+		case strings.HasSuffix(path, ".css"):
+			contentType = "text/css"
+		case strings.HasSuffix(path, ".json"):
+			contentType = "application/json"
+		case strings.HasSuffix(path, ".svg"):
+			contentType = "image/svg+xml"
+		case strings.HasSuffix(path, ".png"):
+			contentType = "image/png"
+		case strings.HasSuffix(path, ".avif"):
+			contentType = "image/avif"
+		case strings.HasSuffix(path, ".ico"):
+			contentType = "image/x-icon"
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		if !strings.HasSuffix(path, ".html") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+		w.Write(content)
 	})
 
 	addr := fmt.Sprintf("127.0.0.1:%d", quotaPort)
@@ -357,14 +362,26 @@ func startQuotaWebServer() error {
 	return http.ListenAndServe(addr, mux)
 }
 
+func convertToAPIResponse(data *DashboardData) *APIResponse {
+	return &APIResponse{
+		Accounts:         data.Accounts,
+		CodexAccounts:    data.CodexAccounts,
+		TotalAntigravity: data.TotalAccounts,
+		TotalCodex:       data.TotalCodex,
+		LastUpdated:      data.LastUpdated,
+	}
+}
+
 func getQuotaData() *DashboardData {
 	quotaCacheMu.RLock()
 	if quotaCachedData != nil && time.Since(quotaCacheTime) < quotaCacheTTL {
 		defer quotaCacheMu.RUnlock()
+		fmt.Printf("   [CACHE] Hit - age %v\n", time.Since(quotaCacheTime).Round(time.Second))
 		return quotaCachedData
 	}
 	quotaCacheMu.RUnlock()
 
+	fmt.Printf("   [CACHE] Miss - fetching fresh data\n")
 	// Fetch fresh data
 	data := fetchAllQuotas()
 
@@ -377,20 +394,34 @@ func getQuotaData() *DashboardData {
 }
 
 func fetchAllQuotas() *DashboardData {
+	totalStart := time.Now()
 	homeDir, _ := os.UserHomeDir()
 	authDir := filepath.Join(homeDir, ".cli-proxy-api")
 
-	// Use a shared HTTP client with connection pooling
+	// Use a shared HTTP client with connection pooling and faster timeouts
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Timeout: 8 * time.Second,
 		Transport: &http.Transport{
 			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: 20,
-			IdleConnTimeout:     30 * time.Second,
+			MaxIdleConnsPerHost: 50,
+			IdleConnTimeout:     90 * time.Second,
+			DisableCompression:  false,
+			ForceAttemptHTTP2:   true,
 		},
 	}
 
 	var accounts []AccountQuota
+	var codexAccounts []CodexAccountQuota
+	var wgMain sync.WaitGroup
+
+	// Start Codex fetch in parallel
+	wgMain.Add(1)
+	go func() {
+		defer wgMain.Done()
+		codexStart := time.Now()
+		codexAccounts = fetchCodexQuotas(client)
+		fmt.Printf("   [FETCH] Codex took %v (%d accounts)\n", time.Since(codexStart).Round(time.Millisecond), len(codexAccounts))
+	}()
 
 	files, err := os.ReadDir(authDir)
 	if err == nil {
@@ -403,6 +434,7 @@ func fetchAllQuotas() *DashboardData {
 		}
 
 		if len(authFiles) > 0 {
+			antigravityStart := time.Now()
 			// Fetch all accounts concurrently
 			var wg sync.WaitGroup
 			accountChan := make(chan AccountQuota, len(authFiles))
@@ -472,11 +504,15 @@ func fetchAllQuotas() *DashboardData {
 			sort.Slice(accounts, func(i, j int) bool {
 				return accounts[i].Email < accounts[j].Email
 			})
+			fmt.Printf("   [FETCH] Antigravity took %v (%d accounts)\n", time.Since(antigravityStart).Round(time.Millisecond), len(accounts))
 		}
 	}
 
-	// Fetch Codex quotas (single account from ~/.codex/auth.json)
-	codexAccounts := fetchCodexQuotas(client)
+	// Wait for Codex to complete
+	wgMain.Wait()
+
+	fmt.Printf("   [FETCH] Total fetch took %v (antigravity=%d, codex=%d)\n", 
+		time.Since(totalStart).Round(time.Millisecond), len(accounts), len(codexAccounts))
 
 	return &DashboardData{
 		Accounts:      accounts,
@@ -896,6 +932,18 @@ func compareResetTimes(a, b string) bool {
 
 // fetchCodexQuotas fetches quota from ~/.cli-proxy-api/codex-*.json files
 func fetchCodexQuotas(client *http.Client) []CodexAccountQuota {
+	// Use a separate client with longer timeout for Codex API (it's slower)
+	codexClient := &http.Client{
+		Timeout: 20 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        20,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     60 * time.Second,
+			ForceAttemptHTTP2:   true,
+		},
+	}
+	_ = client // unused, we use codexClient instead
+
 	homeDir, _ := os.UserHomeDir()
 	authDir := filepath.Join(homeDir, ".cli-proxy-api")
 
@@ -916,65 +964,89 @@ func fetchCodexQuotas(client *http.Client) []CodexAccountQuota {
 		return nil
 	}
 
-	var results []CodexAccountQuota
+	// Fetch all Codex accounts concurrently
+	var wg sync.WaitGroup
+	resultChan := make(chan CodexAccountQuota, len(codexFiles))
 
 	for _, authPath := range codexFiles {
-		data, err := os.ReadFile(authPath)
-		if err != nil {
-			continue
-		}
-
-		var authFile CodexAuthFile
-		if err := json.Unmarshal(data, &authFile); err != nil {
-			continue
-		}
-
-		// Need access token (flat structure, not nested)
-		if authFile.AccessToken == "" {
-			continue
-		}
-
-		accessToken := authFile.AccessToken
-
-		// Check if token is expired and refresh if needed
-		if isCodexTokenExpired(accessToken) && authFile.RefreshToken != "" {
-			newToken, err := refreshCodexToken(client, authFile.RefreshToken)
-			if err == nil {
-				accessToken = newToken
-				// Update the auth file
-				authFile.AccessToken = newToken
-				if updatedData, err := json.MarshalIndent(authFile, "", "  "); err == nil {
-					_ = os.WriteFile(authPath, updatedData, 0644)
-				}
+		wg.Add(1)
+		go func(ap string) {
+			defer wg.Done()
+			
+			data, err := os.ReadFile(ap)
+			if err != nil {
+				return
 			}
-		}
 
-		// Get email from file or id_token
-		email := authFile.Email
-		if email == "" {
-			email = "Codex User"
-			if authFile.IDToken != "" {
-				if claims := decodeCodexJWT(authFile.IDToken); claims != nil {
-					if claims.Email != "" {
-						email = claims.Email
+			var authFile CodexAuthFile
+			if err := json.Unmarshal(data, &authFile); err != nil {
+				return
+			}
+
+			// Need access token (flat structure, not nested)
+			if authFile.AccessToken == "" {
+				return
+			}
+
+			accessToken := authFile.AccessToken
+
+			// Check if token is expired and refresh if needed
+			if isCodexTokenExpired(accessToken) && authFile.RefreshToken != "" {
+				newToken, err := refreshCodexToken(codexClient, authFile.RefreshToken)
+				if err == nil {
+					accessToken = newToken
+					// Update the auth file
+					authFile.AccessToken = newToken
+					if updatedData, err := json.MarshalIndent(authFile, "", "  "); err == nil {
+						_ = os.WriteFile(ap, updatedData, 0644)
 					}
 				}
 			}
-		}
 
-		// Fetch quota
-		quota, err := fetchCodexUsage(client, accessToken, authFile.AccountID)
-		if err != nil {
-			results = append(results, CodexAccountQuota{
-				Email: email,
-				Error: err.Error(),
-			})
-			continue
-		}
+			// Get email from file or id_token
+			email := authFile.Email
+			if email == "" {
+				email = "Codex User"
+				if authFile.IDToken != "" {
+					if claims := decodeCodexJWT(authFile.IDToken); claims != nil {
+						if claims.Email != "" {
+							email = claims.Email
+						}
+					}
+				}
+			}
 
-		quota.Email = email
+			// Fetch quota
+			quota, err := fetchCodexUsage(codexClient, accessToken, authFile.AccountID)
+			if err != nil {
+				resultChan <- CodexAccountQuota{
+					Email: email,
+					Error: err.Error(),
+				}
+				return
+			}
+
+			quota.Email = email
+			resultChan <- quota
+		}(authPath)
+	}
+
+	// Wait and close channel
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	var results []CodexAccountQuota
+	for quota := range resultChan {
 		results = append(results, quota)
 	}
+
+	// Sort by email for consistent ordering
+	sort.Slice(results, func(i, j int) bool {
+		return results[i].Email < results[j].Email
+	})
 
 	return results
 }
