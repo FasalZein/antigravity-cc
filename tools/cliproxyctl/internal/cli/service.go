@@ -161,10 +161,30 @@ func runStop(cmd *cobra.Command, args []string) error {
 }
 
 func runRestart(cmd *cobra.Command, args []string) error {
+	cfg := detectConfig()
+
 	if err := runStop(cmd, args); err != nil {
 		// Continue even if stop fails
 	}
-	// No fixed sleep - stop already confirmed process is gone
+
+	// Wait for port to be released (process gone doesn't mean port is free)
+	if isPortInUseCrossPlatform(cfg.Port) {
+		log("Waiting for port %d to be released...", cfg.Port)
+		portStart := time.Now()
+		for i := 0; i < 20; i++ { // Up to 2 seconds
+			if !isPortInUseCrossPlatform(cfg.Port) {
+				break
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		if isPortInUseCrossPlatform(cfg.Port) {
+			who := getPortProcessCrossPlatform(cfg.Port)
+			logWarn("Port %d still in use after %dms by: %s", cfg.Port, time.Since(portStart).Milliseconds(), who)
+		} else {
+			log("Port released (%dms)", time.Since(portStart).Milliseconds())
+		}
+	}
+
 	return runStart(cmd, args)
 }
 

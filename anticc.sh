@@ -214,15 +214,27 @@ anticc-logs() {
     local arg="${1:-}"
 
     case "$arg" in
-        -f|--follow|follow)
-            _ensure_cliproxyctl && "$CLIPROXY_CTL" logs -f
+        -n|--lines)
+            # Show last N lines (non-following)
+            local lines="${2:-50}"
+            _ensure_cliproxyctl && "$CLIPROXY_CTL" logs -n "$lines"
             ;;
         -a|--all|all)
             _ensure_cliproxyctl && "$CLIPROXY_CTL" logs --all
             ;;
+        ""|--follow|-f|follow)
+            # Default: follow logs (most common use case)
+            _ensure_cliproxyctl && "$CLIPROXY_CTL" logs -f
+            ;;
         *)
-            local lines="${arg:-50}"
-            _ensure_cliproxyctl && "$CLIPROXY_CTL" logs -n "$lines"
+            # Number passed directly: show last N lines
+            if [[ "$arg" =~ ^[0-9]+$ ]]; then
+                _ensure_cliproxyctl && "$CLIPROXY_CTL" logs -n "$arg"
+            else
+                _warn "Unknown option: $arg"
+                _log "Usage: anticc-logs [-f|--follow] [-n N|--lines N] [-a|--all] [N]"
+                return 1
+            fi
             ;;
     esac
 }
@@ -348,7 +360,7 @@ Delegated to cliproxyctl:
   anticc-diagnose        Run full diagnostics
   anticc-quota           Check Antigravity quota for all accounts (CLI)
   anticc-quota-web [port] Open quota dashboard in browser (default: 8318)
-  anticc-logs [N|-f|-a]  View CLIProxyAPI logs (N lines, -f follow, -a all)
+  anticc-logs [-n N|-a]    View CLIProxyAPI logs (default: follow, -n N lines, -a all)
 
 Auto-Update:
   anticc-enable-autoupdate   Enable 12-hour auto-update via launchd
