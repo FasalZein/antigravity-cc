@@ -1,4 +1,5 @@
-import { fetchQuota, invalidateCache, type QuotaData } from '$lib/api/quota';
+import { fetchAntigravity, fetchCodex, invalidateCache, type QuotaData, type AntigravityAccount, type CodexAccount } from '$lib/api/quota';
+import { startCountdownTimer } from '$lib/utils/time.svelte';
 
 // Settings type
 interface Settings {
@@ -10,6 +11,8 @@ interface Settings {
 export const dashboard = $state({
 	data: null as QuotaData | null,
 	loading: true,
+	loadingAntigravity: true,
+	loadingCodex: true,
 	error: null as string | null,
 	activeTab: 'antigravity' as 'antigravity' | 'codex' | 'gemini',
 	emailsHidden: false,
@@ -54,25 +57,28 @@ export function initializeFromStorage(): void {
 }
 
 // Computed values
-function getAverageForGroup(groupName: string): { avg: number; resetIn: string } {
-	if (!dashboard.data?.accounts?.length) return { avg: 0, resetIn: '' };
+function getAverageForGroup(groupName: string): { avg: number; resetIn: string; resetTime: string } {
+	if (!dashboard.data?.accounts?.length) return { avg: 0, resetIn: '', resetTime: '' };
 	
 	let total = 0;
 	let count = 0;
 	let resetIn = '';
+	let resetTime = '';
 	
 	for (const account of dashboard.data.accounts) {
 		const group = account.groupQuotas?.[groupName];
 		if (group) {
 			total += group.minPercent;
 			count++;
-			if (!resetIn && group.resetIn) {
+			// Track earliest reset time
+			if (group.resetTime && (!resetTime || group.resetTime < resetTime)) {
+				resetTime = group.resetTime;
 				resetIn = group.resetIn;
 			}
 		}
 	}
 	
-	return { avg: count > 0 ? total / count : 0, resetIn };
+	return { avg: count > 0 ? total / count : 0, resetIn, resetTime };
 }
 
 export function getClaudeStats() { return getAverageForGroup('Claude'); }
@@ -80,15 +86,29 @@ export function getGeminiProStats() { return getAverageForGroup('Gemini Pro'); }
 export function getGeminiFlashStats() { return getAverageForGroup('Gemini Flash'); }
 
 export function getCodexSessionStats() {
-	if (!dashboard.data?.codexAccounts?.length) return { avg: 0, resetIn: '' };
+	if (!dashboard.data?.codexAccounts?.length) return { avg: 0, resetIn: '', resetTime: '' };
 	const avg = dashboard.data.codexAccounts.reduce((sum, a) => sum + (a.sessionPercent || 0), 0) / dashboard.data.codexAccounts.length;
-	return { avg, resetIn: dashboard.data.codexAccounts[0]?.sessionResetIn || '' };
+	// Find earliest reset
+	let earliest = dashboard.data.codexAccounts[0];
+	for (const acc of dashboard.data.codexAccounts) {
+		if (acc.sessionResetTime && (!earliest.sessionResetTime || acc.sessionResetTime < earliest.sessionResetTime)) {
+			earliest = acc;
+		}
+	}
+	return { avg, resetIn: earliest?.sessionResetIn || '', resetTime: earliest?.sessionResetTime || '' };
 }
 
 export function getCodexWeeklyStats() {
-	if (!dashboard.data?.codexAccounts?.length) return { avg: 0, resetIn: '' };
+	if (!dashboard.data?.codexAccounts?.length) return { avg: 0, resetIn: '', resetTime: '' };
 	const avg = dashboard.data.codexAccounts.reduce((sum, a) => sum + (a.weeklyPercent || 0), 0) / dashboard.data.codexAccounts.length;
-	return { avg, resetIn: dashboard.data.codexAccounts[0]?.weeklyResetIn || '' };
+	// Find earliest reset
+	let earliest = dashboard.data.codexAccounts[0];
+	for (const acc of dashboard.data.codexAccounts) {
+		if (acc.weeklyResetTime && (!earliest.weeklyResetTime || acc.weeklyResetTime < earliest.weeklyResetTime)) {
+			earliest = acc;
+		}
+	}
+	return { avg, resetIn: earliest?.weeklyResetIn || '', resetTime: earliest?.weeklyResetTime || '' };
 }
 
 export function setActiveTab(tab: 'antigravity' | 'codex' | 'gemini') {
@@ -131,29 +151,67 @@ export function updateSettings(newSettings: Partial<Settings>) {
 	}
 }
 
+// Load both providers in parallel but update UI as each completes
 export async function loadQuota(forceRefresh = false): Promise<void> {
 	if (forceRefresh) {
 		dashboard.refreshing = true;
+		invalidateCache();
 	} else {
 		dashboard.loading = true;
+		dashboard.loadingAntigravity = true;
+		dashboard.loadingCodex = true;
 	}
 	dashboard.error = null;
 	
-	try {
-		if (forceRefresh) {
-			invalidateCache();
-		}
-		dashboard.data = await fetchQuota(forceRefresh);
-		dashboard.countdown = dashboard.settings.refreshInterval;
-	} catch (e) {
-		dashboard.error = e instanceof Error ? e.message : 'Unknown error';
-	} finally {
-		dashboard.loading = false;
-		dashboard.refreshing = false;
+	// Initialize data structure if needed
+	if (!dashboard.data) {
+		dashboard.data = {
+			accounts: [],
+			codexAccounts: [],
+			lastUpdated: '',
+			totalAntigravity: 0,
+			totalCodex: 0
+		};
 	}
+	
+	// Load both providers in parallel - UI updates as each completes
+	const antigravityPromise = fetchAntigravity(forceRefresh)
+		.then(result => {
+			dashboard.data!.accounts = result.accounts;
+			dashboard.data!.totalAntigravity = result.totalAntigravity;
+			dashboard.data!.lastUpdated = result.lastUpdated;
+			dashboard.loadingAntigravity = false;
+			dashboard.loading = false; // Show UI as soon as first provider loads
+		})
+		.catch(e => {
+			console.error('Antigravity fetch error:', e);
+			dashboard.loadingAntigravity = false;
+		});
+
+	const codexPromise = fetchCodex(forceRefresh)
+		.then(result => {
+			dashboard.data!.codexAccounts = result.codexAccounts;
+			dashboard.data!.totalCodex = result.totalCodex;
+			if (result.lastUpdated) dashboard.data!.lastUpdated = result.lastUpdated;
+			dashboard.loadingCodex = false;
+			dashboard.loading = false;
+		})
+		.catch(e => {
+			console.error('Codex fetch error:', e);
+			dashboard.loadingCodex = false;
+		});
+
+	await Promise.all([antigravityPromise, codexPromise]);
+	
+	dashboard.countdown = dashboard.settings.refreshInterval;
+	dashboard.loading = false;
+	dashboard.refreshing = false;
 }
 
 export function startCountdown(): () => void {
+	// Start the live countdown timer for reset times
+	const stopLiveCountdown = startCountdownTimer();
+	
 	const timer = setInterval(() => {
 		if (!dashboard.settings.autoRefresh) return;
 		
@@ -163,7 +221,10 @@ export function startCountdown(): () => void {
 		}
 	}, 1000);
 	
-	return () => clearInterval(timer);
+	return () => {
+		clearInterval(timer);
+		stopLiveCountdown();
+	};
 }
 
 export function formatCountdown(seconds: number): string {

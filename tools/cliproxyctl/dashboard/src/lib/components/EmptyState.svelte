@@ -22,6 +22,6 @@
 	<h2 class="text-xl font-semibold text-white mb-2">{title}</h2>
 	<p class="text-text-muted mb-4">{@html message}</p>
 	{#if hint}
-		<p class="text-sm text-text-muted">{hint}</p>
+		<p class="text-sm text-text-muted">{@html hint}</p>
 	{/if}
 </div>

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"cliproxyctl/dashboard"
+	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/cobra"
 )
 
@@ -65,7 +66,15 @@ type QuotaInfoAPI struct {
 
 // ProjectResponse from loadCodeAssist API
 type ProjectResponse struct {
-	CloudAICompanionProject string `json:"cloudaicompanionProject,omitempty"`
+	CloudAICompanionProject string            `json:"cloudaicompanionProject,omitempty"`
+	CurrentTier             *SubscriptionTier `json:"currentTier,omitempty"`
+	PaidTier                *SubscriptionTier `json:"paidTier,omitempty"`
+}
+
+// SubscriptionTier represents Antigravity subscription tier info
+type SubscriptionTier struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // ModelQuota represents parsed quota for a model
@@ -81,6 +90,7 @@ type ModelQuota struct {
 type AccountQuota struct {
 	Email       string                `json:"email"`
 	Error       string                `json:"error,omitempty"`
+	PlanType    string                `json:"planType,omitempty"`
 	Quotas      []ModelQuota          `json:"quotas"`
 	GroupQuotas map[string]GroupQuota `json:"groupQuotas"`
 }
@@ -92,6 +102,7 @@ type GroupQuota struct {
 	Icon       string  `json:"icon"`
 	Color      string  `json:"color"`
 	ResetIn    string  `json:"resetIn"`
+	ResetTime  string  `json:"resetTime,omitempty"`
 }
 
 // ============================================================================
@@ -139,8 +150,10 @@ type CodexAccountQuota struct {
 	PlanType           string  `json:"planType,omitempty"`
 	SessionPercent     float64 `json:"sessionPercent"`     // Remaining (100 - used)
 	SessionResetIn     string  `json:"sessionResetIn"`
+	SessionResetTime   string  `json:"sessionResetTime,omitempty"`
 	WeeklyPercent      float64 `json:"weeklyPercent"`      // Remaining (100 - used)
 	WeeklyResetIn      string  `json:"weeklyResetIn"`
+	WeeklyResetTime    string  `json:"weeklyResetTime,omitempty"`
 	LimitReached       bool    `json:"limitReached"`
 }
 
@@ -234,7 +247,7 @@ func runQuotaCLI() error {
 		}
 
 		filePath := filepath.Join(authDir, file.Name())
-		quotas, email, err := fetchQuotaForFile(client, filePath)
+		quotas, email, _, err := fetchQuotaForFile(client, filePath)
 		if err != nil {
 			fmt.Printf("❌ %s: %v\n\n", file.Name(), err)
 			continue
@@ -256,13 +269,114 @@ func runQuotaCLI() error {
 // Web Server Mode
 // ============================================================================
 
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+}
+
+func fetchAntigravityQuotas() []AccountQuota {
+	homeDir, _ := os.UserHomeDir()
+	authDir := filepath.Join(homeDir, ".cli-proxy-api")
+
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 50,
+			IdleConnTimeout:     90 * time.Second,
+			ForceAttemptHTTP2:   true,
+		},
+	}
+
+	files, err := os.ReadDir(authDir)
+	if err != nil {
+		return nil
+	}
+
+	var authFiles []string
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "antigravity-") && strings.HasSuffix(file.Name(), ".json") {
+			authFiles = append(authFiles, filepath.Join(authDir, file.Name()))
+		}
+	}
+
+	if len(authFiles) == 0 {
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	accountChan := make(chan AccountQuota, len(authFiles))
+
+	for _, filePath := range authFiles {
+		wg.Add(1)
+		go func(fp string) {
+			defer wg.Done()
+			quotas, email, tierName, err := fetchQuotaForFile(client, fp)
+			account := AccountQuota{
+				Email:       email,
+				PlanType:    tierName,
+				Quotas:      quotas,
+				GroupQuotas: make(map[string]GroupQuota),
+			}
+			if err != nil {
+				account.Error = err.Error()
+			} else {
+				groups := make(map[string][]ModelQuota)
+				for _, q := range quotas {
+					groups[q.Group] = append(groups[q.Group], q)
+				}
+				for group, gQuotas := range groups {
+					minPct := 100.0
+					earliestReset := ""
+					earliestResetTime := ""
+					for _, q := range gQuotas {
+						if q.Percentage < minPct {
+							minPct = q.Percentage
+						}
+						if q.Percentage < 100 && q.ResetTime != "" {
+							if earliestResetTime == "" || q.ResetTime < earliestResetTime {
+								earliestResetTime = q.ResetTime
+								earliestReset = q.ResetIn
+							}
+						}
+					}
+					account.GroupQuotas[group] = GroupQuota{
+						Name:       group,
+						MinPercent: minPct,
+						Icon:       getGroupIcon(group),
+						Color:      getGroupColor(minPct),
+						ResetIn:    earliestReset,
+						ResetTime:  earliestResetTime,
+					}
+				}
+			}
+			accountChan <- account
+		}(filePath)
+	}
+
+	go func() {
+		wg.Wait()
+		close(accountChan)
+	}()
+
+	var accounts []AccountQuota
+	for account := range accountChan {
+		accounts = append(accounts, account)
+	}
+
+	sort.Slice(accounts, func(i, j int) bool {
+		return accounts[i].Email < accounts[j].Email
+	})
+
+	return accounts
+}
+
 func startQuotaWebServer() error {
 	mux := http.NewServeMux()
 
 	// API endpoint
 	mux.HandleFunc("/api/quota", func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-		
 		// CORS for development
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
@@ -275,14 +389,41 @@ func startQuotaWebServer() error {
 
 		forceRefresh := r.URL.Query().Get("refresh") == "true"
 		
-		// Force refresh if requested
+		// Return stale data immediately if available, refresh in background
+		quotaCacheMu.RLock()
+		hasCache := quotaCachedData != nil
+		cacheAge := time.Since(quotaCacheTime)
+		quotaCacheMu.RUnlock()
+		
 		if forceRefresh {
+			// Force refresh: clear cache and fetch new
 			quotaCacheMu.Lock()
 			quotaCachedData = nil
 			quotaCacheMu.Unlock()
-			fmt.Printf("   [API] Force refresh requested\n")
+		} else if hasCache {
+			// Return cached data immediately
+			quotaCacheMu.RLock()
+			data := quotaCachedData
+			quotaCacheMu.RUnlock()
+			
+			apiResp := convertToAPIResponse(data)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(apiResp)
+			
+			// If cache is stale, trigger background refresh
+			if cacheAge > quotaCacheTTL {
+				go func() {
+					newData := fetchAllQuotas()
+					quotaCacheMu.Lock()
+					quotaCachedData = newData
+					quotaCacheTime = time.Now()
+					quotaCacheMu.Unlock()
+				}()
+			}
+			return
 		}
 
+		// No cache - must fetch (first load)
 		data := getQuotaData()
 		
 		// Convert to API response format
@@ -290,10 +431,52 @@ func startQuotaWebServer() error {
 		
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(apiResp)
-		
-		fmt.Printf("   [API] /api/quota took %v (accounts=%d, codex=%d, cached=%v)\n", 
-			time.Since(start).Round(time.Millisecond), 
-			len(data.Accounts), len(data.CodexAccounts), !forceRefresh && quotaCachedData != nil)
+	})
+
+	// Separate endpoint for Antigravity only (faster)
+	mux.HandleFunc("/api/quota/antigravity", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		accounts := fetchAntigravityQuotas()
+		resp := map[string]interface{}{
+			"accounts":         accounts,
+			"totalAntigravity": len(accounts),
+			"lastUpdated":      time.Now().Format("15:04:05"),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	})
+
+	// Separate endpoint for Codex only
+	mux.HandleFunc("/api/quota/codex", func(w http.ResponseWriter, r *http.Request) {
+		setCORSHeaders(w)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		client := &http.Client{
+			Timeout: 20 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        50,
+				MaxIdleConnsPerHost: 25,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		}
+		accounts := fetchCodexQuotas(client)
+		resp := map[string]interface{}{
+			"codexAccounts": accounts,
+			"totalCodex":    len(accounts),
+			"lastUpdated":   time.Now().Format("15:04:05"),
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
 	})
 
 	// Serve SvelteKit build files
@@ -351,6 +534,9 @@ func startQuotaWebServer() error {
 	fmt.Println("   Press Ctrl+C to stop")
 	fmt.Println()
 
+	// Start file watcher for hot reload
+	go startFileWatcher()
+
 	// Open browser
 	if quotaOpenBrowser {
 		go func() {
@@ -360,6 +546,61 @@ func startQuotaWebServer() error {
 	}
 
 	return http.ListenAndServe(addr, mux)
+}
+
+// startFileWatcher watches the auth directory for file changes and invalidates cache
+func startFileWatcher() {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	authDir := filepath.Join(homeDir, ".cli-proxy-api")
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return
+	}
+	defer watcher.Close()
+
+	err = watcher.Add(authDir)
+	if err != nil {
+		return
+	}
+
+	// Debounce: wait a bit after changes before invalidating
+	var debounceTimer *time.Timer
+	debounceDelay := 500 * time.Millisecond
+
+	for {
+		select {
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			// Only care about auth files
+			if !strings.HasSuffix(event.Name, ".json") {
+				continue
+			}
+			if !strings.Contains(event.Name, "antigravity-") && !strings.Contains(event.Name, "codex-") {
+				continue
+			}
+
+			// Debounce multiple rapid changes
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			debounceTimer = time.AfterFunc(debounceDelay, func() {
+				quotaCacheMu.Lock()
+				quotaCachedData = nil
+				quotaCacheMu.Unlock()
+			})
+
+		case _, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 func convertToAPIResponse(data *DashboardData) *APIResponse {
@@ -394,7 +635,6 @@ func getQuotaData() *DashboardData {
 }
 
 func fetchAllQuotas() *DashboardData {
-	totalStart := time.Now()
 	homeDir, _ := os.UserHomeDir()
 	authDir := filepath.Join(homeDir, ".cli-proxy-api")
 
@@ -418,9 +658,7 @@ func fetchAllQuotas() *DashboardData {
 	wgMain.Add(1)
 	go func() {
 		defer wgMain.Done()
-		codexStart := time.Now()
 		codexAccounts = fetchCodexQuotas(client)
-		fmt.Printf("   [FETCH] Codex took %v (%d accounts)\n", time.Since(codexStart).Round(time.Millisecond), len(codexAccounts))
 	}()
 
 	files, err := os.ReadDir(authDir)
@@ -434,7 +672,6 @@ func fetchAllQuotas() *DashboardData {
 		}
 
 		if len(authFiles) > 0 {
-			antigravityStart := time.Now()
 			// Fetch all accounts concurrently
 			var wg sync.WaitGroup
 			accountChan := make(chan AccountQuota, len(authFiles))
@@ -444,10 +681,11 @@ func fetchAllQuotas() *DashboardData {
 				go func(fp string) {
 					defer wg.Done()
 
-					quotas, email, err := fetchQuotaForFile(client, fp)
+					quotas, email, tierName, err := fetchQuotaForFile(client, fp)
 
 					account := AccountQuota{
 						Email:       email,
+						PlanType:    tierName,
 						Quotas:      quotas,
 						GroupQuotas: make(map[string]GroupQuota),
 					}
@@ -464,13 +702,15 @@ func fetchAllQuotas() *DashboardData {
 						for group, gQuotas := range groups {
 							minPct := 100.0
 							earliestReset := ""
+							earliestResetTime := ""
 							for _, q := range gQuotas {
 								if q.Percentage < minPct {
 									minPct = q.Percentage
 								}
 								// Track earliest reset time (for model with lowest quota)
-								if q.Percentage < 100 && (earliestReset == "" || q.ResetIn != "" && q.ResetIn != "—") {
-									if earliestReset == "" || compareResetTimes(q.ResetIn, earliestReset) {
+								if q.Percentage < 100 && q.ResetTime != "" {
+									if earliestResetTime == "" || q.ResetTime < earliestResetTime {
+										earliestResetTime = q.ResetTime
 										earliestReset = q.ResetIn
 									}
 								}
@@ -481,6 +721,7 @@ func fetchAllQuotas() *DashboardData {
 								Icon:       getGroupIcon(group),
 								Color:      getGroupColor(minPct),
 								ResetIn:    earliestReset,
+								ResetTime:  earliestResetTime,
 							}
 						}
 					}
@@ -504,15 +745,11 @@ func fetchAllQuotas() *DashboardData {
 			sort.Slice(accounts, func(i, j int) bool {
 				return accounts[i].Email < accounts[j].Email
 			})
-			fmt.Printf("   [FETCH] Antigravity took %v (%d accounts)\n", time.Since(antigravityStart).Round(time.Millisecond), len(accounts))
 		}
 	}
 
 	// Wait for Codex to complete
 	wgMain.Wait()
-
-	fmt.Printf("   [FETCH] Total fetch took %v (antigravity=%d, codex=%d)\n", 
-		time.Since(totalStart).Round(time.Millisecond), len(accounts), len(codexAccounts))
 
 	return &DashboardData{
 		Accounts:      accounts,
@@ -551,15 +788,15 @@ func openBrowserURL(url string) {
 // Shared Functions
 // ============================================================================
 
-func fetchQuotaForFile(client *http.Client, filePath string) ([]ModelQuota, string, error) {
+func fetchQuotaForFile(client *http.Client, filePath string) ([]ModelQuota, string, string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, "", fmt.Errorf("read file: %w", err)
+		return nil, "", "", fmt.Errorf("read file: %w", err)
 	}
 
 	var authFile AuthFile
 	if err := json.Unmarshal(data, &authFile); err != nil {
-		return nil, "", fmt.Errorf("parse JSON: %w", err)
+		return nil, "", "", fmt.Errorf("parse JSON: %w", err)
 	}
 
 	accessToken := authFile.AccessToken
@@ -568,7 +805,7 @@ func fetchQuotaForFile(client *http.Client, filePath string) ([]ModelQuota, stri
 	if isTokenExpired(authFile.Expired) && authFile.RefreshToken != "" {
 		newToken, err := refreshToken(client, authFile.RefreshToken)
 		if err != nil {
-			return nil, authFile.Email, fmt.Errorf("refresh token: %w", err)
+			return nil, authFile.Email, "", fmt.Errorf("refresh token: %w", err)
 		}
 		accessToken = newToken
 
@@ -580,16 +817,16 @@ func fetchQuotaForFile(client *http.Client, filePath string) ([]ModelQuota, stri
 		}
 	}
 
-	// First get the project ID
-	projectID := fetchProjectID(client, accessToken)
+	// Get project ID and subscription tier
+	projectID, tierName := fetchProjectIDAndTier(client, accessToken)
 
 	// Then fetch quota
 	quotas, err := fetchQuota(client, accessToken, projectID)
 	if err != nil {
-		return nil, authFile.Email, err
+		return nil, authFile.Email, tierName, err
 	}
 
-	return quotas, authFile.Email, nil
+	return quotas, authFile.Email, tierName, nil
 }
 
 func isTokenExpired(expiredStr string) bool {
@@ -639,7 +876,7 @@ func refreshToken(client *http.Client, refreshTokenStr string) (string, error) {
 	return tokenResp.AccessToken, nil
 }
 
-func fetchProjectID(client *http.Client, accessToken string) string {
+func fetchProjectIDAndTier(client *http.Client, accessToken string) (string, string) {
 	payload := map[string]interface{}{
 		"metadata": map[string]string{
 			"ideType": "ANTIGRAVITY",
@@ -649,7 +886,7 @@ func fetchProjectID(client *http.Client, accessToken string) string {
 
 	req, err := http.NewRequest("POST", projectAPIURL, bytes.NewReader(body))
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", userAgent)
@@ -657,20 +894,34 @@ func fetchProjectID(client *http.Client, accessToken string) string {
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != 200 {
-		return ""
+		return "", ""
 	}
 
 	var projectResp ProjectResponse
 	if err := json.NewDecoder(resp.Body).Decode(&projectResp); err != nil {
-		return ""
+		return "", ""
 	}
 
-	return projectResp.CloudAICompanionProject
+	// Get tier name - prioritize paidTier over currentTier
+	tierName := ""
+	if projectResp.PaidTier != nil && projectResp.PaidTier.Name != "" {
+		tierName = projectResp.PaidTier.Name
+	} else if projectResp.CurrentTier != nil && projectResp.CurrentTier.Name != "" {
+		tierName = projectResp.CurrentTier.Name
+	}
+
+	return projectResp.CloudAICompanionProject, tierName
+}
+
+// Legacy function for backward compatibility
+func fetchProjectID(client *http.Client, accessToken string) string {
+	projectID, _ := fetchProjectIDAndTier(client, accessToken)
+	return projectID
 }
 
 func fetchQuota(client *http.Client, accessToken, projectID string) ([]ModelQuota, error) {
@@ -1116,6 +1367,7 @@ func fetchCodexUsage(client *http.Client, accessToken string, accountID string) 
 			if usageResp.RateLimit.PrimaryWindow.ResetAt > 0 {
 				resetTime := time.Unix(usageResp.RateLimit.PrimaryWindow.ResetAt, 0)
 				quota.SessionResetIn = formatResetTimeFromTime(resetTime)
+				quota.SessionResetTime = resetTime.UTC().Format(time.RFC3339)
 			}
 		}
 
@@ -1125,6 +1377,7 @@ func fetchCodexUsage(client *http.Client, accessToken string, accountID string) 
 			if usageResp.RateLimit.SecondaryWindow.ResetAt > 0 {
 				resetTime := time.Unix(usageResp.RateLimit.SecondaryWindow.ResetAt, 0)
 				quota.WeeklyResetIn = formatResetTimeFromTime(resetTime)
+				quota.WeeklyResetTime = resetTime.UTC().Format(time.RFC3339)
 			}
 		}
 	}

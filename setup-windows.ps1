@@ -27,7 +27,7 @@ $ErrorActionPreference = "Stop"
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
-$script:REPO_URL = "https://github.com/router-for-me/CLIProxyAPIPlus.git"
+$script:REPO_URL = "https://github.com/router-for-me/CLIProxyAPI.git"
 $script:CLIPROXY_DIR = $PSScriptRoot
 $script:SOURCE_DIR = Join-Path $script:CLIPROXY_DIR "cliproxy-source"
 $script:BIN_DIR = Join-Path $env:LOCALAPPDATA "Programs\CLIProxyAPI"
