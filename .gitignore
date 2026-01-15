@@ -40,6 +40,7 @@ issue_streaming_token_count.md
 # Tools - compiled binaries (keep source, ignore binaries)
 tools/check-quota/check-quota
 tools/check-status/
+tools/cliproxyctl/cliproxyctl
 
 # Cloned source directories (independent git repos)
 cliproxy-source/

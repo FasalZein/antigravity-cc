@@ -232,6 +232,23 @@ function Build-Binary {
         exit 1
     }
 
+    # Build cliproxyctl (quota dashboard tool)
+    Write-SubStep "Building cliproxyctl..."
+    $cliproxyctlDir = Join-Path $script:SOURCE_DIR "tools\cliproxyctl"
+    if (Test-Path $cliproxyctlDir) {
+        Push-Location $cliproxyctlDir
+        try {
+            go build -o "cliproxyctl.exe" .
+            if (Test-Path "cliproxyctl.exe") {
+                Move-Item -Path "cliproxyctl.exe" -Destination (Join-Path $script:BIN_DIR "cliproxyctl.exe") -Force
+                Write-SubStep "$($script:C_GREEN)✓$($script:C_NC) cliproxyctl built successfully"
+            }
+        } catch {
+            Write-Warn "cliproxyctl build failed (non-critical): $_"
+        }
+        Pop-Location
+    }
+
     Pop-Location
 }
 

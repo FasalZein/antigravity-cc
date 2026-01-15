@@ -46,6 +46,7 @@ detect_os() {
     case "$(uname -s)" in
         Darwin*)    echo "macos" ;;
         Linux*)     echo "linux" ;;
+        MINGW*|MSYS*|CYGWIN*)  echo "windows" ;;
         *)          echo "unknown" ;;
     esac
 }
@@ -59,10 +60,23 @@ detect_distro() {
     fi
 }
 
+# Detect if running in WSL
+detect_wsl() {
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        echo "wsl"
+    elif [[ -n "$WSL_DISTRO_NAME" ]]; then
+        echo "wsl"
+    else
+        echo ""
+    fi
+}
+
 OS=$(detect_os)
 ARCH=$(uname -m)
 DISTRO=""
+WSL=""
 [[ "$OS" == "linux" ]] && DISTRO=$(detect_distro)
+[[ "$OS" == "linux" ]] && WSL=$(detect_wsl)
 
 echo ""
 echo "=============================================="
@@ -70,8 +84,24 @@ echo "  Antigravity Claude Code Setup"
 echo "=============================================="
 echo "  OS: $OS ($ARCH)"
 [[ -n "$DISTRO" ]] && echo "  Distro: $DISTRO"
+[[ -n "$WSL" ]] && echo "  Environment: WSL (Windows Subsystem for Linux)"
 echo "=============================================="
 echo ""
+
+# =============================================================================
+# Windows Check - Redirect to PowerShell script
+# =============================================================================
+
+if [[ "$OS" == "windows" ]]; then
+    echo ""
+    warn "Detected Windows (Git Bash/MSYS/Cygwin)"
+    warn "Please use the PowerShell setup script instead:"
+    echo ""
+    echo "  powershell -ExecutionPolicy Bypass -File setup-windows.ps1"
+    echo ""
+    echo "Or if using WSL, this script will work natively."
+    exit 0
+fi
 
 # =============================================================================
 # Prerequisites Check
@@ -222,6 +252,17 @@ build_cliproxy() {
         log "Built successfully: $BUILT_VERSION"
     else
         error "Build failed!"
+    fi
+
+    # Build cliproxyctl (quota dashboard tool)
+    log "Building cliproxyctl..."
+    cd "$CLIPROXY_SOURCE_DIR/tools/cliproxyctl"
+    go build -o "$CLIPROXY_BIN_DIR/cliproxyctl" .
+    chmod +x "$CLIPROXY_BIN_DIR/cliproxyctl"
+    if [[ -x "$CLIPROXY_BIN_DIR/cliproxyctl" ]]; then
+        log "cliproxyctl built successfully"
+    else
+        warn "cliproxyctl build failed (non-critical)"
     fi
 
     cd "$SCRIPT_DIR"

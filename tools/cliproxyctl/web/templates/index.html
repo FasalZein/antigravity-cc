@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI-Pill War Room</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: {
+                            0: '#09090b',
+                            1: '#0f0f12',
+                            2: '#18181b',
+                            3: '#1f1f23',
+                            4: '#27272a',
+                        },
+                        accent: {
+                            primary: '#6366f1',
+                            secondary: '#8b5cf6',
+                            glow: 'rgba(99, 102, 241, 0.15)',
+                        },
+                        status: {
+                            healthy: '#10b981',
+                            caution: '#f59e0b',
+                            critical: '#ef4444',
+                        },
+                        text: {
+                            primary: '#fafafa',
+                            secondary: '#a1a1aa',
+                            muted: '#52525b',
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['Space Mono', 'monospace'],
+                        sans: ['Outfit', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        * { font-family: 'Outfit', sans-serif; }
+        .font-mono { font-family: 'Space Mono', monospace !important; }
+
+        /* Glassmorphism */
+        .glass {
+            background: rgba(15, 15, 18, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .glass-card {
+            background: linear-gradient(135deg, rgba(24, 24, 27, 0.9) 0%, rgba(15, 15, 18, 0.95) 100%);
+            backdrop-filter: blur(8px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        /* Progress animations */
+        .progress-fill { transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+        .ring-progress { transition: stroke-dashoffset 0.6s cubic-bezier(0.4, 0, 0.2, 1); }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #0f0f12; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+        /* Tab transitions */
+        .tab-btn { transition: all 0.2s ease; }
+        .tab-btn.active {
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(139, 92, 246, 0.1) 100%);
+            border-color: rgba(99, 102, 241, 0.4);
+        }
+
+        /* Countdown ring */
+        .countdown-ring { transform: rotate(-90deg); transform-origin: center; }
+
+        /* Card hover */
+        .account-card {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .account-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Email blur */
+        .blur-email { filter: blur(6px); user-select: none; }
+
+        /* Modal */
+        .modal-backdrop { background: rgba(0, 0, 0, 0.85); backdrop-filter: blur(8px); }
+        .modal-enter { animation: modal-in 0.2s ease-out; }
+        @keyframes modal-in {
+            from { opacity: 0; transform: scale(0.96) translateY(8px); }
+            to { opacity: 1; transform: scale(1) translateY(0); }
+        }
+
+        /* Subtle glow */
+        .glow-ring {
+            box-shadow: 0 0 20px rgba(99, 102, 241, 0.1), inset 0 0 20px rgba(99, 102, 241, 0.05);
+        }
+
+        /* Provider content */
+        .provider-content { display: none; }
+        .provider-content.active { display: block; }
+    </style>
+</head>
+<body class="bg-surface-0 min-h-screen text-text-primary">
+    <!-- Header -->
+    <header class="glass sticky top-0 z-50 border-b border-white/5">
+        <div class="max-w-7xl mx-auto px-4 py-3">
+            <div class="flex items-center justify-between">
+                <!-- Logo & Title -->
+                <div class="flex items-center gap-2">
+                    <img src="/static/ai-pill.avif" alt="AI-Pill" class="w-14 h-14 rounded-lg">
+                    <div>
+                        <h1 class="text-lg font-semibold text-white tracking-tight">AI-Pill War Room</h1>
+                        <p class="text-xs text-text-muted">Quota Command Center</p>
+                    </div>
+                </div>
+
+                <!-- Provider Tabs -->
+                <div class="flex items-center gap-2">
+                    <button onclick="switchProvider('antigravity')" id="tab-antigravity" class="tab-btn active flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 text-sm font-medium">
+                        <img src="/static/antigravity.svg" alt="" class="h-5 w-5">
+                        <span class="hidden sm:inline">Antigravity</span>
+                    </button>
+                    <button onclick="switchProvider('codex')" id="tab-codex" class="tab-btn flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 text-sm font-medium text-text-secondary hover:text-text-primary">
+                        <img src="/static/codex.svg" alt="" class="h-5 w-5">
+                        <span class="hidden sm:inline">Codex</span>
+                    </button>
+                    <button onclick="switchProvider('gemini')" id="tab-gemini" class="tab-btn flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 text-sm font-medium text-text-secondary hover:text-text-primary">
+                        <img src="/static/gemini-cli.svg" alt="" class="h-5 w-5">
+                        <span class="hidden sm:inline">Gemini CLI</span>
+                    </button>
+                </div>
+
+                <!-- Controls -->
+                <div class="flex items-center gap-4">
+                    <!-- Hide Emails -->
+                    <button onclick="toggleEmailVisibility()" id="emailToggle" class="p-2 rounded-lg hover:bg-surface-3 text-text-secondary hover:text-text-primary transition-colors" title="Toggle email visibility">
+                        <svg id="eyeIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </button>
+
+                    <!-- Countdown Ring -->
+                    <div class="relative glow-ring rounded-full p-0.5">
+                        <div class="relative w-10 h-10 bg-surface-2 rounded-full flex items-center justify-center">
+                            <svg class="countdown-ring absolute inset-0 w-10 h-10" viewBox="0 0 40 40">
+                                <circle cx="20" cy="20" r="18" fill="none" stroke="#27272a" stroke-width="2"/>
+                                <circle id="countdownCircle" cx="20" cy="20" r="18" fill="none" stroke="#6366f1" stroke-width="2"
+                                    stroke-dasharray="113.1" stroke-dashoffset="0" stroke-linecap="round" class="ring-progress"/>
+                            </svg>
+                            <span id="countdownText" class="text-xs font-mono text-text-secondary relative z-10">5m</span>
+                        </div>
+                    </div>
+
+                    <!-- Refresh -->
+                    <button onclick="refreshData()" id="refreshBtn" class="flex items-center gap-2 px-4 py-2 bg-accent-primary/10 hover:bg-accent-primary/20 border border-accent-primary/30 rounded-lg text-accent-primary text-sm font-medium transition-colors">
+                        <svg id="refreshIcon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                        <span class="hidden sm:inline">Refresh</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        <!-- Antigravity Content -->
+        <div id="content-antigravity" class="provider-content active">
+            <!-- Summary Row -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <!-- Accounts Card -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Accounts</span>
+                        <span class="text-xs text-text-muted font-mono" id="lastUpdatedBadge">{{.LastUpdated}}</span>
+                    </div>
+                    <p id="totalAccounts" class="text-3xl font-bold text-white font-mono">{{.TotalAccounts}}</p>
+                </div>
+
+                <!-- Claude Ring -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Claude</span>
+                                <span id="claudeReset" class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">—</span>
+                            </div>
+                            <p id="claudeAvg" class="text-2xl font-bold text-white font-mono mt-2">--</p>
+                        </div>
+                        <div class="relative w-14 h-14">
+                            <svg class="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+                                <circle cx="28" cy="28" r="24" fill="none" stroke="#27272a" stroke-width="4"/>
+                                <circle id="claudeRing" cx="28" cy="28" r="24" fill="none" stroke="#10b981" stroke-width="4"
+                                    stroke-dasharray="150.8" stroke-dashoffset="150.8" stroke-linecap="round" class="ring-progress"/>
+                            </svg>
+                            <span id="claudeRingText" class="absolute inset-0 flex items-center justify-center text-xs font-mono text-text-secondary">--%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gemini Pro Ring -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Gemini Pro</span>
+                                <span id="geminiProReset" class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">—</span>
+                            </div>
+                            <p id="geminiProAvg" class="text-2xl font-bold text-white font-mono mt-2">--</p>
+                        </div>
+                        <div class="relative w-14 h-14">
+                            <svg class="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+                                <circle cx="28" cy="28" r="24" fill="none" stroke="#27272a" stroke-width="4"/>
+                                <circle id="geminiProRing" cx="28" cy="28" r="24" fill="none" stroke="#10b981" stroke-width="4"
+                                    stroke-dasharray="150.8" stroke-dashoffset="150.8" stroke-linecap="round" class="ring-progress"/>
+                            </svg>
+                            <span id="geminiProRingText" class="absolute inset-0 flex items-center justify-center text-xs font-mono text-text-secondary">--%</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gemini Flash Ring -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Gemini Flash</span>
+                                <span id="geminiFlashReset" class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">—</span>
+                            </div>
+                            <p id="geminiFlashAvg" class="text-2xl font-bold text-white font-mono mt-2">--</p>
+                        </div>
+                        <div class="relative w-14 h-14">
+                            <svg class="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+                                <circle cx="28" cy="28" r="24" fill="none" stroke="#27272a" stroke-width="4"/>
+                                <circle id="geminiFlashRing" cx="28" cy="28" r="24" fill="none" stroke="#10b981" stroke-width="4"
+                                    stroke-dasharray="150.8" stroke-dashoffset="150.8" stroke-linecap="round" class="ring-progress"/>
+                            </svg>
+                            <span id="geminiFlashRingText" class="absolute inset-0 flex items-center justify-center text-xs font-mono text-text-secondary">--%</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Accounts Grid -->
+            <div id="accountsGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {{range $idx, $account := .Accounts}}
+                <div class="account-card glass-card rounded-xl overflow-hidden" data-email="{{.Email}}">
+                    <!-- Account Header -->
+                    <div class="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+                        <div class="min-w-0 flex-1">
+                            <p class="email-text text-sm text-text-primary truncate font-mono">{{.Email}}</p>
+                            {{if .Error}}
+                            <p class="text-xs text-status-critical mt-1">{{.Error}}</p>
+                            {{else}}
+                            <div class="flex items-center gap-3 mt-1">
+                                <span class="text-xs text-text-muted">{{len .Quotas}} models</span>
+                                <span class="text-xs text-text-muted">•</span>
+                                <span class="text-xs text-text-muted font-mono">Updated {{$.LastUpdated}}</span>
+                            </div>
+                            {{end}}
+                        </div>
+                        {{if not .Error}}
+                        <button onclick="showDetails('{{.Email}}')" class="p-2 rounded-lg hover:bg-surface-3 text-text-muted hover:text-text-primary transition-colors" title="View all models">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25" />
+                            </svg>
+                        </button>
+                        {{end}}
+                    </div>
+
+                    {{if not .Error}}
+                    <!-- Quota Bars -->
+                    <div class="p-5 space-y-4">
+                        {{with index .GroupQuotas "Claude"}}
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm text-text-secondary font-medium">Claude</span>
+                                    {{if and .ResetIn (ne .ResetIn "")}}
+                                    <span class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.ResetIn}}</span>
+                                    {{end}}
+                                </div>
+                                <span class="font-mono text-sm {{if ge .MinPercent 50.0}}text-status-healthy{{else if ge .MinPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">
+                                    {{printf "%.0f" .MinPercent}}%
+                                </span>
+                            </div>
+                            <div class="h-2 bg-surface-3 rounded-full overflow-hidden">
+                                <div class="progress-fill h-full rounded-full {{if ge .MinPercent 50.0}}bg-status-healthy{{else if ge .MinPercent 20.0}}bg-status-caution{{else}}bg-status-critical{{end}}"
+                                    style="width: {{.MinPercent}}%"></div>
+                            </div>
+                        </div>
+                        {{end}}
+
+                        {{with index .GroupQuotas "Gemini Pro"}}
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm text-text-secondary font-medium">Gemini Pro</span>
+                                    {{if and .ResetIn (ne .ResetIn "")}}
+                                    <span class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.ResetIn}}</span>
+                                    {{end}}
+                                </div>
+                                <span class="font-mono text-sm {{if ge .MinPercent 50.0}}text-status-healthy{{else if ge .MinPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">
+                                    {{printf "%.0f" .MinPercent}}%
+                                </span>
+                            </div>
+                            <div class="h-2 bg-surface-3 rounded-full overflow-hidden">
+                                <div class="progress-fill h-full rounded-full {{if ge .MinPercent 50.0}}bg-status-healthy{{else if ge .MinPercent 20.0}}bg-status-caution{{else}}bg-status-critical{{end}}"
+                                    style="width: {{.MinPercent}}%"></div>
+                            </div>
+                        </div>
+                        {{end}}
+
+                        {{with index .GroupQuotas "Gemini Flash"}}
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm text-text-secondary font-medium">Gemini Flash</span>
+                                    {{if and .ResetIn (ne .ResetIn "")}}
+                                    <span class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.ResetIn}}</span>
+                                    {{end}}
+                                </div>
+                                <span class="font-mono text-sm {{if ge .MinPercent 50.0}}text-status-healthy{{else if ge .MinPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">
+                                    {{printf "%.0f" .MinPercent}}%
+                                </span>
+                            </div>
+                            <div class="h-2 bg-surface-3 rounded-full overflow-hidden">
+                                <div class="progress-fill h-full rounded-full {{if ge .MinPercent 50.0}}bg-status-healthy{{else if ge .MinPercent 20.0}}bg-status-caution{{else}}bg-status-critical{{end}}"
+                                    style="width: {{.MinPercent}}%"></div>
+                            </div>
+                        </div>
+                        {{end}}
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+
+            {{if eq .TotalAccounts 0}}
+            <!-- Empty State -->
+            <div class="text-center py-20">
+                <div class="inline-flex items-center justify-center w-20 h-20 bg-surface-2 rounded-2xl mb-6">
+                    <svg class="w-10 h-10 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                    </svg>
+                </div>
+                <h2 class="text-xl font-semibold text-white mb-2">No Accounts Found</h2>
+                <p class="text-text-muted">
+                    No auth files found in <code class="bg-surface-3 px-2 py-1 rounded font-mono text-xs">~/.cli-proxy-api/</code>
+                </p>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Codex Content -->
+        <div id="content-codex" class="provider-content">
+            {{if gt .TotalCodex 0}}
+            <!-- Codex Summary Row -->
+            <div class="grid grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+                <!-- Accounts Card -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Accounts</span>
+                        <span class="text-xs text-text-muted font-mono" id="codexLastUpdated">{{.LastUpdated}}</span>
+                    </div>
+                    <p id="codexTotalAccounts" class="text-3xl font-bold text-white font-mono">{{.TotalCodex}}</p>
+                </div>
+
+                <!-- Session Ring -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Session (5h)</span>
+                                {{range .CodexAccounts}}
+                                {{if .SessionResetIn}}
+                                <span id="codexSessionReset" class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.SessionResetIn}}</span>
+                                {{end}}
+                                {{end}}
+                            </div>
+                            {{range .CodexAccounts}}
+                            <p id="codexSessionAvg" class="text-2xl font-bold font-mono mt-2 {{if ge .SessionPercent 50.0}}text-status-healthy{{else if ge .SessionPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">{{printf "%.0f" .SessionPercent}}%</p>
+                            {{end}}
+                        </div>
+                        <div class="relative w-14 h-14">
+                            <svg class="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+                                <circle cx="28" cy="28" r="24" fill="none" stroke="#27272a" stroke-width="4"/>
+                                {{range .CodexAccounts}}
+                                <circle id="codexSessionRing" cx="28" cy="28" r="24" fill="none" stroke="{{if ge .SessionPercent 50.0}}#10b981{{else if ge .SessionPercent 20.0}}#f59e0b{{else}}#ef4444{{end}}" stroke-width="4"
+                                    stroke-dasharray="150.8" stroke-dashoffset="{{ringOffset .SessionPercent}}" stroke-linecap="round" class="ring-progress"/>
+                                {{end}}
+                            </svg>
+                            {{range .CodexAccounts}}
+                            <span id="codexSessionRingText" class="absolute inset-0 flex items-center justify-center text-xs font-mono text-text-secondary">{{printf "%.0f" .SessionPercent}}%</span>
+                            {{end}}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Weekly Ring -->
+                <div class="glass-card rounded-xl p-5">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs text-text-muted uppercase tracking-wider font-medium">Weekly</span>
+                                {{range .CodexAccounts}}
+                                {{if .WeeklyResetIn}}
+                                <span id="codexWeeklyReset" class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.WeeklyResetIn}}</span>
+                                {{end}}
+                                {{end}}
+                            </div>
+                            {{range .CodexAccounts}}
+                            <p id="codexWeeklyAvg" class="text-2xl font-bold font-mono mt-2 {{if ge .WeeklyPercent 50.0}}text-status-healthy{{else if ge .WeeklyPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">{{printf "%.0f" .WeeklyPercent}}%</p>
+                            {{end}}
+                        </div>
+                        <div class="relative w-14 h-14">
+                            <svg class="w-14 h-14 -rotate-90" viewBox="0 0 56 56">
+                                <circle cx="28" cy="28" r="24" fill="none" stroke="#27272a" stroke-width="4"/>
+                                {{range .CodexAccounts}}
+                                <circle id="codexWeeklyRing" cx="28" cy="28" r="24" fill="none" stroke="{{if ge .WeeklyPercent 50.0}}#10b981{{else if ge .WeeklyPercent 20.0}}#f59e0b{{else}}#ef4444{{end}}" stroke-width="4"
+                                    stroke-dasharray="150.8" stroke-dashoffset="{{ringOffset .WeeklyPercent}}" stroke-linecap="round" class="ring-progress"/>
+                                {{end}}
+                            </svg>
+                            {{range .CodexAccounts}}
+                            <span id="codexWeeklyRingText" class="absolute inset-0 flex items-center justify-center text-xs font-mono text-text-secondary">{{printf "%.0f" .WeeklyPercent}}%</span>
+                            {{end}}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Codex Accounts Grid -->
+            <div id="codexAccountsGrid" class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                {{range .CodexAccounts}}
+                <div class="account-card glass-card rounded-xl overflow-hidden" data-email="{{.Email}}">
+                    <!-- Account Header -->
+                    <div class="px-5 py-4 border-b border-white/5 flex items-center justify-between">
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-2">
+                                <p class="email-text text-sm text-text-primary truncate font-mono">{{.Email}}</p>
+                                {{if .PlanType}}
+                                <span class="text-xs px-2 py-0.5 bg-accent-primary/20 text-accent-primary rounded-full font-medium">{{.PlanType}}</span>
+                                {{end}}
+                            </div>
+                            {{if .Error}}
+                            <p class="text-xs text-status-critical mt-1">{{.Error}}</p>
+                            {{else}}
+                            <div class="flex items-center gap-3 mt-1">
+                                <span class="text-xs text-text-muted">Codex CLI</span>
+                                {{if .LimitReached}}
+                                <span class="text-xs text-status-critical">• Limit Reached</span>
+                                {{end}}
+                            </div>
+                            {{end}}
+                        </div>
+                    </div>
+
+                    {{if not .Error}}
+                    <!-- Quota Bars -->
+                    <div class="p-5 space-y-4">
+                        <!-- Session Quota -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm text-text-secondary font-medium">Session (5h)</span>
+                                    {{if .SessionResetIn}}
+                                    <span class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.SessionResetIn}}</span>
+                                    {{end}}
+                                </div>
+                                <span class="font-mono text-sm {{if ge .SessionPercent 50.0}}text-status-healthy{{else if ge .SessionPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">
+                                    {{printf "%.0f" .SessionPercent}}%
+                                </span>
+                            </div>
+                            <div class="h-2 bg-surface-3 rounded-full overflow-hidden">
+                                <div class="progress-fill h-full rounded-full {{if ge .SessionPercent 50.0}}bg-status-healthy{{else if ge .SessionPercent 20.0}}bg-status-caution{{else}}bg-status-critical{{end}}"
+                                    style="width: {{.SessionPercent}}%"></div>
+                            </div>
+                        </div>
+
+                        <!-- Weekly Quota -->
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-sm text-text-secondary font-medium">Weekly</span>
+                                    {{if .WeeklyResetIn}}
+                                    <span class="text-xs text-accent-primary font-mono px-1.5 py-0.5 bg-accent-primary/10 rounded">↻ {{.WeeklyResetIn}}</span>
+                                    {{end}}
+                                </div>
+                                <span class="font-mono text-sm {{if ge .WeeklyPercent 50.0}}text-status-healthy{{else if ge .WeeklyPercent 20.0}}text-status-caution{{else}}text-status-critical{{end}}">
+                                    {{printf "%.0f" .WeeklyPercent}}%
+                                </span>
+                            </div>
+                            <div class="h-2 bg-surface-3 rounded-full overflow-hidden">
+                                <div class="progress-fill h-full rounded-full {{if ge .WeeklyPercent 50.0}}bg-status-healthy{{else if ge .WeeklyPercent 20.0}}bg-status-caution{{else}}bg-status-critical{{end}}"
+                                    style="width: {{.WeeklyPercent}}%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    {{end}}
+                </div>
+                {{end}}
+            </div>
+            {{else}}
+            <!-- Empty State -->
+            <div class="text-center py-20">
+                <div class="inline-flex items-center justify-center w-20 h-20 bg-surface-2 rounded-2xl mb-6">
+                    <img src="/static/codex.svg" alt="" class="w-10 h-10">
+                </div>
+                <h2 class="text-xl font-semibold text-white mb-2">No Codex Accounts Found</h2>
+                <p class="text-text-muted mb-4">No auth files found at <code class="bg-surface-3 px-2 py-1 rounded font-mono text-xs">~/.cli-proxy-api/codex-*.json</code></p>
+                <p class="text-sm text-text-muted">Add Codex accounts via CLIProxyAPI</p>
+            </div>
+            {{end}}
+        </div>
+
+        <!-- Gemini CLI Content (Coming Soon) -->
+        <div id="content-gemini" class="provider-content">
+            <div class="text-center py-20">
+                <div class="inline-flex items-center justify-center w-20 h-20 bg-surface-2 rounded-2xl mb-6">
+                    <img src="/static/gemini-cli.svg" alt="" class="w-10 h-10">
+                </div>
+                <h2 class="text-xl font-semibold text-white mb-2">Gemini CLI Quota</h2>
+                <p class="text-text-muted mb-4">Gemini CLI quota monitoring coming soon.</p>
+                <p class="text-sm text-text-muted">Auth files will be loaded from <code class="bg-surface-3 px-2 py-1 rounded font-mono text-xs">~/.gemini/</code></p>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-white/5 mt-8 py-4">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex items-center justify-center gap-4 text-xs text-text-muted">
+                <span class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-status-healthy animate-pulse"></span>
+                    Live
+                </span>
+                <span class="text-surface-4">|</span>
+                <span>Auto-refresh <span class="font-mono">5m</span></span>
+                <span class="text-surface-4">|</span>
+                <kbd class="px-1.5 py-0.5 bg-surface-3 rounded text-[10px] font-mono">Ctrl+C</kbd>
+                <span>to stop</span>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Modal for Model Details -->
+    <div id="modal" class="fixed inset-0 z-50 hidden" onclick="closeModal(event)">
+        <div class="modal-backdrop absolute inset-0"></div>
+        <div class="relative flex items-center justify-center min-h-screen p-4">
+            <div class="modal-enter glass-card rounded-xl shadow-2xl w-full max-w-lg max-h-[80vh] overflow-hidden" onclick="event.stopPropagation()">
+                <div class="flex items-center justify-between px-5 py-4 border-b border-white/5">
+                    <h3 id="modalTitle" class="text-sm font-medium text-white font-mono truncate"></h3>
+                    <button onclick="closeModal()" class="p-2 rounded-lg hover:bg-surface-3 text-text-muted hover:text-text-primary transition-colors">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+                <div id="modalContent" class="p-5 overflow-y-auto max-h-[60vh] space-y-2">
+                    <!-- Model list injected here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/dashboard.js"></script>
+    <script>initDashboard({{json .}});</script>
+</body>
+</html>

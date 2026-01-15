@@ -91,8 +91,25 @@ cliproxyctl logs -f
 cliproxyctl update
 cliproxyctl rollback
 cliproxyctl diagnose
-cliproxyctl quota
+cliproxyctl quota           # CLI quota check
+cliproxyctl quota --web     # Web dashboard with Antigravity + Codex tabs
 ```
+
+### Quota Dashboard
+
+View your quota usage in a web browser:
+
+```bash
+cliproxyctl quota --web
+```
+
+This opens a dashboard showing:
+- **Antigravity tab**: Per-account session/daily quota with visual progress rings
+- **Codex tab**: Session (5h) and weekly quota for all Codex accounts
+
+The dashboard reads auth tokens from:
+- Antigravity: `~/.cli-proxy-api/antigravity-*.json`
+- Codex: `~/.cli-proxy-api/codex-*.json`
 
 See [tools/cliproxyctl/README.md](tools/cliproxyctl/README.md) for developer docs.
 

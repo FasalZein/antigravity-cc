@@ -2,7 +2,7 @@ package cli
 
 import (
 	"bytes"
-	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -17,11 +17,9 @@ import (
 	"sync"
 	"time"
 
+	"cliproxyctl/web"
 	"github.com/spf13/cobra"
 )
-
-//go:embed templates/*
-var templateFS embed.FS
 
 const (
 	quotaAPIURL   = "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels"
@@ -94,13 +92,66 @@ type GroupQuota struct {
 	MinPercent float64 `json:"minPercent"`
 	Icon       string  `json:"icon"`
 	Color      string  `json:"color"`
+	ResetIn    string  `json:"resetIn"`
+}
+
+// ============================================================================
+// Codex Quota Types
+// ============================================================================
+
+// CodexAuthFile represents the Codex CLI auth file structure (flat, like Antigravity)
+type CodexAuthFile struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	IDToken      string `json:"id_token"`
+	Email        string `json:"email"`
+	Expired      string `json:"expired,omitempty"`
+	AccountID    string `json:"account_id,omitempty"`
+	Type         string `json:"type,omitempty"`
+}
+
+// CodexUsageResponse from OpenAI's usage API
+type CodexUsageResponse struct {
+	RateLimit *CodexRateLimitInfo `json:"rate_limit"`
+}
+
+// CodexRateLimitInfo contains rate limit windows
+type CodexRateLimitInfo struct {
+	PrimaryWindow   *CodexWindowInfo `json:"primary_window"`   // Session (5-hour window)
+	SecondaryWindow *CodexWindowInfo `json:"secondary_window"` // Weekly
+}
+
+// CodexWindowInfo contains window quota info
+type CodexWindowInfo struct {
+	UsedPercent int   `json:"used_percent"`
+	ResetAt     int64 `json:"reset_at"` // Unix timestamp
+}
+
+const (
+	codexUsageAPI     = "https://chatgpt.com/backend-api/wham/usage"
+	codexTokenURL     = "https://auth.openai.com/oauth/token"
+	codexClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
+)
+
+// CodexAccountQuota represents quota for a Codex account
+type CodexAccountQuota struct {
+	Email              string  `json:"email"`
+	Error              string  `json:"error,omitempty"`
+	PlanType           string  `json:"planType,omitempty"`
+	SessionPercent     float64 `json:"sessionPercent"`     // Remaining (100 - used)
+	SessionResetIn     string  `json:"sessionResetIn"`
+	WeeklyPercent      float64 `json:"weeklyPercent"`      // Remaining (100 - used)
+	WeeklyResetIn      string  `json:"weeklyResetIn"`
+	LimitReached       bool    `json:"limitReached"`
 }
 
 // DashboardData for web template
 type DashboardData struct {
-	Accounts      []AccountQuota `json:"accounts"`
-	LastUpdated   string         `json:"lastUpdated"`
-	TotalAccounts int            `json:"totalAccounts"`
+	Accounts        []AccountQuota      `json:"accounts"`
+	CodexAccounts   []CodexAccountQuota `json:"codexAccounts"`
+	LastUpdated     string              `json:"lastUpdated"`
+	TotalAccounts   int                 `json:"totalAccounts"`
+	TotalCodex      int                 `json:"totalCodex"`
 }
 
 var (
@@ -207,12 +258,64 @@ func startQuotaWebServer() error {
 		"multiply": func(a, b int) int {
 			return a * b
 		},
-	}).ParseFS(templateFS, "templates/*.html")
+		"minus": func(a, b float64) float64 {
+			return a - b
+		},
+		"ringOffset": func(percent float64) float64 {
+			// Calculate stroke-dashoffset: 150.8 * (1 - percent/100)
+			return 150.8 * (1.0 - percent/100.0)
+		},
+	}).ParseFS(web.Assets, "templates/*.html")
 	if err != nil {
 		return fmt.Errorf("error parsing templates: %w", err)
 	}
 
 	mux := http.NewServeMux()
+
+	// Static files (logos, JS, etc.)
+	mux.HandleFunc("/static/", func(w http.ResponseWriter, r *http.Request) {
+		// Strip /static/ prefix
+		fileName := strings.TrimPrefix(r.URL.Path, "/static/")
+		if fileName == "" {
+			http.NotFound(w, r)
+			return
+		}
+
+		// Try static/images first, then static/js
+		var content []byte
+		var err error
+		var contentType string
+
+		switch {
+		case strings.HasSuffix(fileName, ".js"):
+			content, err = web.Assets.ReadFile("static/js/" + fileName)
+			contentType = "application/javascript"
+		case strings.HasSuffix(fileName, ".svg"):
+			content, err = web.Assets.ReadFile("static/images/" + fileName)
+			contentType = "image/svg+xml"
+		case strings.HasSuffix(fileName, ".avif"):
+			content, err = web.Assets.ReadFile("static/images/" + fileName)
+			contentType = "image/avif"
+		case strings.HasSuffix(fileName, ".png"):
+			content, err = web.Assets.ReadFile("static/images/" + fileName)
+			contentType = "image/png"
+		case strings.HasSuffix(fileName, ".jpg"), strings.HasSuffix(fileName, ".jpeg"):
+			content, err = web.Assets.ReadFile("static/images/" + fileName)
+			contentType = "image/jpeg"
+		default:
+			content, err = web.Assets.ReadFile("static/images/" + fileName)
+			contentType = "application/octet-stream"
+		}
+
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+
+		w.Header().Set("Content-Type", contentType)
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+		w.Write(content)
+	})
 
 	// Routes
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -277,33 +380,6 @@ func fetchAllQuotas() *DashboardData {
 	homeDir, _ := os.UserHomeDir()
 	authDir := filepath.Join(homeDir, ".cli-proxy-api")
 
-	files, err := os.ReadDir(authDir)
-	if err != nil {
-		return &DashboardData{
-			Accounts:    []AccountQuota{},
-			LastUpdated: time.Now().Format("15:04:05"),
-		}
-	}
-
-	// Filter auth files first
-	var authFiles []string
-	for _, file := range files {
-		if strings.HasPrefix(file.Name(), "antigravity-") && strings.HasSuffix(file.Name(), ".json") {
-			authFiles = append(authFiles, filepath.Join(authDir, file.Name()))
-		}
-	}
-
-	if len(authFiles) == 0 {
-		return &DashboardData{
-			Accounts:    []AccountQuota{},
-			LastUpdated: time.Now().Format("15:04:05"),
-		}
-	}
-
-	// Fetch all accounts concurrently
-	var wg sync.WaitGroup
-	accountChan := make(chan AccountQuota, len(authFiles))
-
 	// Use a shared HTTP client with connection pooling
 	client := &http.Client{
 		Timeout: 10 * time.Second,
@@ -314,69 +390,100 @@ func fetchAllQuotas() *DashboardData {
 		},
 	}
 
-	for _, filePath := range authFiles {
-		wg.Add(1)
-		go func(fp string) {
-			defer wg.Done()
+	var accounts []AccountQuota
 
-			quotas, email, err := fetchQuotaForFile(client, fp)
-
-			account := AccountQuota{
-				Email:       email,
-				Quotas:      quotas,
-				GroupQuotas: make(map[string]GroupQuota),
+	files, err := os.ReadDir(authDir)
+	if err == nil {
+		// Filter auth files first
+		var authFiles []string
+		for _, file := range files {
+			if strings.HasPrefix(file.Name(), "antigravity-") && strings.HasSuffix(file.Name(), ".json") {
+				authFiles = append(authFiles, filepath.Join(authDir, file.Name()))
 			}
+		}
 
-			if err != nil {
-				account.Error = err.Error()
-			} else {
-				// Calculate group quotas
-				groups := make(map[string][]ModelQuota)
-				for _, q := range quotas {
-					groups[q.Group] = append(groups[q.Group], q)
-				}
+		if len(authFiles) > 0 {
+			// Fetch all accounts concurrently
+			var wg sync.WaitGroup
+			accountChan := make(chan AccountQuota, len(authFiles))
 
-				for group, gQuotas := range groups {
-					minPct := 100.0
-					for _, q := range gQuotas {
-						if q.Percentage < minPct {
-							minPct = q.Percentage
+			for _, filePath := range authFiles {
+				wg.Add(1)
+				go func(fp string) {
+					defer wg.Done()
+
+					quotas, email, err := fetchQuotaForFile(client, fp)
+
+					account := AccountQuota{
+						Email:       email,
+						Quotas:      quotas,
+						GroupQuotas: make(map[string]GroupQuota),
+					}
+
+					if err != nil {
+						account.Error = err.Error()
+					} else {
+						// Calculate group quotas
+						groups := make(map[string][]ModelQuota)
+						for _, q := range quotas {
+							groups[q.Group] = append(groups[q.Group], q)
+						}
+
+						for group, gQuotas := range groups {
+							minPct := 100.0
+							earliestReset := ""
+							for _, q := range gQuotas {
+								if q.Percentage < minPct {
+									minPct = q.Percentage
+								}
+								// Track earliest reset time (for model with lowest quota)
+								if q.Percentage < 100 && (earliestReset == "" || q.ResetIn != "" && q.ResetIn != "—") {
+									if earliestReset == "" || compareResetTimes(q.ResetIn, earliestReset) {
+										earliestReset = q.ResetIn
+									}
+								}
+							}
+							account.GroupQuotas[group] = GroupQuota{
+								Name:       group,
+								MinPercent: minPct,
+								Icon:       getGroupIcon(group),
+								Color:      getGroupColor(minPct),
+								ResetIn:    earliestReset,
+							}
 						}
 					}
-					account.GroupQuotas[group] = GroupQuota{
-						Name:       group,
-						MinPercent: minPct,
-						Icon:       getGroupIcon(group),
-						Color:      getGroupColor(minPct),
-					}
-				}
+
+					accountChan <- account
+				}(filePath)
 			}
 
-			accountChan <- account
-		}(filePath)
+			// Wait for all goroutines to complete
+			go func() {
+				wg.Wait()
+				close(accountChan)
+			}()
+
+			// Collect results
+			for account := range accountChan {
+				accounts = append(accounts, account)
+			}
+
+			// Sort accounts by email for consistent ordering
+			sort.Slice(accounts, func(i, j int) bool {
+				return accounts[i].Email < accounts[j].Email
+			})
+		}
 	}
 
-	// Wait for all goroutines to complete
-	go func() {
-		wg.Wait()
-		close(accountChan)
-	}()
-
-	// Collect results
-	var accounts []AccountQuota
-	for account := range accountChan {
-		accounts = append(accounts, account)
-	}
-
-	// Sort accounts by email for consistent ordering
-	sort.Slice(accounts, func(i, j int) bool {
-		return accounts[i].Email < accounts[j].Email
-	})
+	// Fetch Codex quotas (single account from ~/.codex/auth.json)
+	codexAccounts := fetchCodexQuotas(client)
 
 	return &DashboardData{
 		Accounts:      accounts,
+		CodexAccounts: codexAccounts,
 		LastUpdated:   time.Now().Format("15:04:05"),
 		TotalAccounts: len(accounts),
+		TotalCodex:    len(codexAccounts),
 	}
 }
 
@@ -747,4 +854,349 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// compareResetTimes returns true if a is earlier than b (both are formatted strings like "1h 30m")
+func compareResetTimes(a, b string) bool {
+	// Parse reset times to comparable durations
+	parseReset := func(s string) int {
+		if s == "" || s == "—" || s == "now" {
+			return 0
+		}
+		total := 0
+		parts := strings.Fields(s)
+		for _, p := range parts {
+			n := 0
+			unit := ""
+			for i, c := range p {
+				if c >= '0' && c <= '9' {
+					n = n*10 + int(c-'0')
+				} else {
+					unit = p[i:]
+					break
+				}
+			}
+			switch {
+			case strings.HasPrefix(unit, "d"):
+				total += n * 24 * 60
+			case strings.HasPrefix(unit, "h"):
+				total += n * 60
+			case strings.HasPrefix(unit, "m"):
+				total += n
+			}
+		}
+		return total
+	}
+	return parseReset(a) < parseReset(b)
+}
+
+// ============================================================================
+// Codex Quota Functions
+// ============================================================================
+
+// fetchCodexQuotas fetches quota from ~/.cli-proxy-api/codex-*.json files
+func fetchCodexQuotas(client *http.Client) []CodexAccountQuota {
+	homeDir, _ := os.UserHomeDir()
+	authDir := filepath.Join(homeDir, ".cli-proxy-api")
+
+	files, err := os.ReadDir(authDir)
+	if err != nil {
+		return nil
+	}
+
+	// Filter codex auth files
+	var codexFiles []string
+	for _, file := range files {
+		if strings.HasPrefix(file.Name(), "codex-") && strings.HasSuffix(file.Name(), ".json") {
+			codexFiles = append(codexFiles, filepath.Join(authDir, file.Name()))
+		}
+	}
+
+	if len(codexFiles) == 0 {
+		return nil
+	}
+
+	var results []CodexAccountQuota
+
+	for _, authPath := range codexFiles {
+		data, err := os.ReadFile(authPath)
+		if err != nil {
+			continue
+		}
+
+		var authFile CodexAuthFile
+		if err := json.Unmarshal(data, &authFile); err != nil {
+			continue
+		}
+
+		// Need access token (flat structure, not nested)
+		if authFile.AccessToken == "" {
+			continue
+		}
+
+		accessToken := authFile.AccessToken
+
+		// Check if token is expired and refresh if needed
+		if isCodexTokenExpired(accessToken) && authFile.RefreshToken != "" {
+			newToken, err := refreshCodexToken(client, authFile.RefreshToken)
+			if err == nil {
+				accessToken = newToken
+				// Update the auth file
+				authFile.AccessToken = newToken
+				if updatedData, err := json.MarshalIndent(authFile, "", "  "); err == nil {
+					_ = os.WriteFile(authPath, updatedData, 0644)
+				}
+			}
+		}
+
+		// Get email from file or id_token
+		email := authFile.Email
+		if email == "" {
+			email = "Codex User"
+			if authFile.IDToken != "" {
+				if claims := decodeCodexJWT(authFile.IDToken); claims != nil {
+					if claims.Email != "" {
+						email = claims.Email
+					}
+				}
+			}
+		}
+
+		// Fetch quota
+		quota, err := fetchCodexUsage(client, accessToken, authFile.AccountID)
+		if err != nil {
+			results = append(results, CodexAccountQuota{
+				Email: email,
+				Error: err.Error(),
+			})
+			continue
+		}
+
+		quota.Email = email
+		results = append(results, quota)
+	}
+
+	return results
+}
+
+// CodexUsageAPIResponse from ChatGPT usage API
+type CodexUsageAPIResponse struct {
+	PlanType  string                 `json:"plan_type,omitempty"`
+	RateLimit *CodexRateLimitAPIInfo `json:"rate_limit,omitempty"`
+}
+
+// CodexRateLimitAPIInfo from API
+type CodexRateLimitAPIInfo struct {
+	LimitReached    bool               `json:"limit_reached"`
+	PrimaryWindow   *CodexWindowAPIInfo `json:"primary_window,omitempty"`   // Session (5h)
+	SecondaryWindow *CodexWindowAPIInfo `json:"secondary_window,omitempty"` // Weekly
+}
+
+// CodexWindowAPIInfo from API
+type CodexWindowAPIInfo struct {
+	UsedPercent int   `json:"used_percent"`
+	ResetAt     int64 `json:"reset_at"` // Unix timestamp
+}
+
+// CodexJWTClaims decoded from id_token
+type CodexJWTClaims struct {
+	Email    string `json:"email"`
+	PlanType string `json:"chatgpt_plan_type,omitempty"`
+}
+
+func fetchCodexUsage(client *http.Client, accessToken string, accountID string) (CodexAccountQuota, error) {
+	req, err := http.NewRequest("GET", codexUsageAPI, nil)
+	if err != nil {
+		return CodexAccountQuota{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Accept", "application/json")
+	if accountID != "" {
+		req.Header.Set("Chatgpt-Account-Id", accountID)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return CodexAccountQuota{}, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return CodexAccountQuota{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var usageResp CodexUsageAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&usageResp); err != nil {
+		return CodexAccountQuota{}, err
+	}
+
+	quota := CodexAccountQuota{
+		PlanType: usageResp.PlanType,
+	}
+
+	if usageResp.RateLimit != nil {
+		quota.LimitReached = usageResp.RateLimit.LimitReached
+
+		// Primary window = session (5h)
+		if usageResp.RateLimit.PrimaryWindow != nil {
+			quota.SessionPercent = float64(100 - usageResp.RateLimit.PrimaryWindow.UsedPercent)
+			if usageResp.RateLimit.PrimaryWindow.ResetAt > 0 {
+				resetTime := time.Unix(usageResp.RateLimit.PrimaryWindow.ResetAt, 0)
+				quota.SessionResetIn = formatResetTimeFromTime(resetTime)
+			}
+		}
+
+		// Secondary window = weekly
+		if usageResp.RateLimit.SecondaryWindow != nil {
+			quota.WeeklyPercent = float64(100 - usageResp.RateLimit.SecondaryWindow.UsedPercent)
+			if usageResp.RateLimit.SecondaryWindow.ResetAt > 0 {
+				resetTime := time.Unix(usageResp.RateLimit.SecondaryWindow.ResetAt, 0)
+				quota.WeeklyResetIn = formatResetTimeFromTime(resetTime)
+			}
+		}
+	}
+
+	return quota, nil
+}
+
+func formatResetTimeFromTime(t time.Time) string {
+	now := time.Now()
+	diff := t.Sub(now)
+
+	if diff <= 0 {
+		return "now"
+	}
+
+	hours := int(diff.Hours())
+	minutes := int(diff.Minutes()) % 60
+	days := hours / 24
+	hours = hours % 24
+
+	if days > 0 {
+		if hours > 0 {
+			return fmt.Sprintf("%dd %dh", days, hours)
+		}
+		return fmt.Sprintf("%dd", days)
+	}
+	if hours > 0 {
+		if minutes > 0 {
+			return fmt.Sprintf("%dh %dm", hours, minutes)
+		}
+		return fmt.Sprintf("%dh", hours)
+	}
+	return fmt.Sprintf("%dm", maxInt(1, minutes))
+}
+
+func isCodexTokenExpired(accessToken string) bool {
+	parts := strings.Split(accessToken, ".")
+	if len(parts) < 2 {
+		return true
+	}
+
+	// Decode payload (second part)
+	payload := parts[1]
+	// Add padding
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+	// Replace URL-safe chars
+	payload = strings.ReplaceAll(payload, "-", "+")
+	payload = strings.ReplaceAll(payload, "_", "/")
+
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return true
+	}
+
+	var claims map[string]interface{}
+	if err := json.Unmarshal(data, &claims); err != nil {
+		return true
+	}
+
+	exp, ok := claims["exp"].(float64)
+	if !ok {
+		return true
+	}
+
+	// Token is expired if exp is in the past (with 60s buffer)
+	return time.Unix(int64(exp), 0).Before(time.Now().Add(60 * time.Second))
+}
+
+func refreshCodexToken(client *http.Client, refreshToken string) (string, error) {
+	payload := map[string]string{
+		"grant_type":    "refresh_token",
+		"refresh_token": refreshToken,
+		"client_id":     codexClientID,
+	}
+	body, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", codexTokenURL, bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("token refresh failed: HTTP %d", resp.StatusCode)
+	}
+
+	var tokenResp struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tokenResp); err != nil {
+		return "", err
+	}
+
+	return tokenResp.AccessToken, nil
+}
+
+func decodeCodexJWT(token string) *CodexJWTClaims {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil
+	}
+
+	payload := parts[1]
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+	payload = strings.ReplaceAll(payload, "-", "+")
+	payload = strings.ReplaceAll(payload, "_", "/")
+
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		return nil
+	}
+
+	var rawClaims map[string]interface{}
+	if err := json.Unmarshal(data, &rawClaims); err != nil {
+		return nil
+	}
+
+	claims := &CodexJWTClaims{}
+	if email, ok := rawClaims["email"].(string); ok {
+		claims.Email = email
+	}
+
+	// Extract plan from nested auth object
+	if auth, ok := rawClaims["https://api.openai.com/auth"].(map[string]interface{}); ok {
+		if planType, ok := auth["chatgpt_plan_type"].(string); ok {
+			claims.PlanType = planType
+		}
+	}
+
+	return claims
 }
