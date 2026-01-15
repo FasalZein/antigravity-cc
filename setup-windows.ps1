@@ -260,10 +260,10 @@ function Initialize-Config {
     if (-not (Test-Path $envFile)) {
         @"
 # CLIProxyAPI Environment Variables
-# Add your API key here
-CLIPROXY_API_KEY=your-api-key-here
+# Default API key is "dummy" for local-only services
+CLIPROXY_API_KEY=dummy
 "@ | Out-File -FilePath $envFile -Encoding UTF8
-        Write-SubStep "Created .env file - please add your CLIPROXY_API_KEY"
+        Write-SubStep "Created .env with default API key"
     }
 }
 

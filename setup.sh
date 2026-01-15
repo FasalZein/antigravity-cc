@@ -255,15 +255,15 @@ install_ccr() {
 setup_config() {
     log "Step 4: Setting up configuration..."
 
-    # Generate or load API key
+    # API key defaults to "dummy" for local-only services
+    # User can change this in .env if needed
     if [[ -f "$SCRIPT_DIR/.env" ]]; then
         log ".env exists, loading..."
         source "$SCRIPT_DIR/.env"
     else
-        API_KEY="sk-$(openssl rand -hex 24)"
-        echo "CLIPROXY_API_KEY=\"$API_KEY\"" > "$SCRIPT_DIR/.env"
-        log "Generated new API key"
-        CLIPROXY_API_KEY="$API_KEY"
+        CLIPROXY_API_KEY="dummy"
+        echo "CLIPROXY_API_KEY=\"$CLIPROXY_API_KEY\"" > "$SCRIPT_DIR/.env"
+        log "Created .env with default API key"
     fi
 
     # Create config.yaml
