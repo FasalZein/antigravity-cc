@@ -468,6 +468,58 @@ anticc-quota-web() {
 }
 
 # ============================================================================
+# LOG VIEWING
+# ============================================================================
+
+# View CLIProxyAPI logs (like brew services log)
+anticc-logs() {
+    local log_file="$HOME/.local/var/log/cliproxyapi.log"
+    local lines="${1:-50}"
+    
+    if [[ ! -f "$log_file" ]]; then
+        _warn "Log file not found at $log_file"
+        return 1
+    fi
+    
+    case "$lines" in
+        -f|--follow|follow)
+            _log "Following logs (Ctrl+C to stop)..."
+            tail -f "$log_file"
+            ;;
+        -a|--all|all)
+            less "$log_file"
+            ;;
+        *)
+            tail -n "$lines" "$log_file"
+            ;;
+    esac
+}
+
+# View updater logs
+anticc-logs-updater() {
+    local log_file="$HOME/.local/var/log/cliproxy-updater.log"
+    local lines="${1:-50}"
+    
+    if [[ ! -f "$log_file" ]]; then
+        _warn "Updater log file not found at $log_file"
+        return 1
+    fi
+    
+    case "$lines" in
+        -f|--follow|follow)
+            _log "Following updater logs (Ctrl+C to stop)..."
+            tail -f "$log_file"
+            ;;
+        -a|--all|all)
+            less "$log_file"
+            ;;
+        *)
+            tail -n "$lines" "$log_file"
+            ;;
+    esac
+}
+
+# ============================================================================
 # HELP
 # ============================================================================
 
@@ -501,8 +553,13 @@ Quota Commands:
   anticc-quota           Check Antigravity quota for all accounts (CLI)
   anticc-quota-web [port] Open quota dashboard in browser (default: 8318)
 
+Log Commands:
+  anticc-logs [N|-f|-a]  View CLIProxyAPI logs (N lines, -f follow, -a all)
+  anticc-logs-updater    View auto-updater logs
+
 Diagnostics:
   anticc-diagnose        Run full diagnostics
+  anticc-help            Show this help
 
 Files:
   Binary:   ~/.local/bin/cliproxyapi
@@ -510,6 +567,12 @@ Files:
   Config:   $ANTICC_DIR/config.yaml
   Logs:     ~/.local/var/log/cliproxyapi.log
   Updater:  $ANTICC_DIR/cliproxy-updater.sh
+
+Examples:
+  anticc-logs            Show last 50 lines of logs
+  anticc-logs 100        Show last 100 lines
+  anticc-logs -f         Follow logs in real-time (like tail -f)
+  anticc-logs -a         Open full log in less
 
 Environment variables are auto-exported when sourced (for IDE plugins).
 To disable: export ANTICC_AUTO_ENABLE=false before sourcing.
