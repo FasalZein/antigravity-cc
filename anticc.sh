@@ -35,9 +35,9 @@ export CLIPROXY_DIR="${CLIPROXY_DIR:-$ANTICC_DIR}"
 CLIPROXY_BIN_DIR="${HOME}/.local/bin"
 CLIPROXY_CTL="${ANTICC_DIR}/tools/cliproxyctl/cliproxyctl"
 
-# API key - hardcoded "dummy" for local-only services
-# All configs (config.yaml, CCR, etc.) should also use "dummy"
-export CLIPROXY_API_KEY="dummy"
+# API key - defaults to "dummy" for local-only services
+# User can override by setting CLIPROXY_API_KEY before sourcing this script
+export CLIPROXY_API_KEY="${CLIPROXY_API_KEY:-dummy}"
 
 # Internal settings (exported when anticc-on is called)
 _ANTICC_BASE_URL="http://127.0.0.1:${ANTICC_CCR_PORT}"

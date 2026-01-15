@@ -36,8 +36,11 @@ $script:CLIPROXY_UPDATER = Join-Path $script:ANTICC_DIR "cliproxy-updater.ps1"
 $script:CLIPROXY_LOG_DIR = Join-Path $env:LOCALAPPDATA "CLIProxyAPI\logs"
 $script:CLIPROXY_CTL = Join-Path $script:ANTICC_DIR "tools\cliproxyctl\cliproxyctl.exe"
 
-# API key - hardcoded "dummy" for local-only services
-$env:CLIPROXY_API_KEY = "dummy"
+# API key - defaults to "dummy" for local-only services
+# User can override by setting CLIPROXY_API_KEY before sourcing this script
+if (-not $env:CLIPROXY_API_KEY) {
+    $env:CLIPROXY_API_KEY = "dummy"
+}
 
 # Internal settings - connects directly to CLIProxyAPI
 $script:_ANTICC_BASE_URL = "http://127.0.0.1:$($script:ANTICC_CLIPROXY_PORT)"
