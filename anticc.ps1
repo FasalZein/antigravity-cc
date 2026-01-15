@@ -7,12 +7,10 @@
 # Commands:
 #   anticc-on         Enable Antigravity mode (set env vars)
 #   anticc-off        Disable Antigravity mode (unset env vars)
-#   anticc-status     Check current profile status
-#   anticc-update     Pull latest source and rebuild CLIProxyAPI
-#   anticc-rollback   Rollback to previous version if update fails
-#   anticc-version    Show version info (running, binary, source)
-#   anticc-quota      Check quota for all accounts (CLI)
-#   anticc-quota-web  Open quota dashboard in browser
+#
+# Delegated to cliproxyctl:
+#   anticc-status, anticc-version, anticc-update, anticc-rollback, anticc-diagnose,
+#   anticc-quota, anticc-start, anticc-stop-service, anticc-restart-service, anticc-logs
 #
 # CLIProxyAPI is built from source and auto-updated via Task Scheduler.
 # Windows version connects directly to CLIProxyAPI (no CCR needed).
@@ -36,18 +34,10 @@ $script:CLIPROXY_BIN_DIR = Join-Path $env:LOCALAPPDATA "Programs\CLIProxyAPI"
 $script:CLIPROXY_SOURCE_DIR = Join-Path $script:ANTICC_DIR "cliproxy-source"
 $script:CLIPROXY_UPDATER = Join-Path $script:ANTICC_DIR "cliproxy-updater.ps1"
 $script:CLIPROXY_LOG_DIR = Join-Path $env:LOCALAPPDATA "CLIProxyAPI\logs"
+$script:CLIPROXY_CTL = Join-Path $script:ANTICC_DIR "tools\cliproxyctl\cliproxyctl.exe"
 
-# Load API key from .env if not set
-$envFile = Join-Path $env:CLIPROXY_DIR ".env"
-if (-not $env:CLIPROXY_API_KEY -and (Test-Path $envFile)) {
-    Get-Content $envFile | ForEach-Object {
-        if ($_ -match "^\s*([^#][^=]+)\s*=\s*(.+)\s*$") {
-            $name = $matches[1].Trim()
-            $value = $matches[2].Trim().Trim('"').Trim("'")
-            Set-Item -Path "env:$name" -Value $value
-        }
-    }
-}
+# API key - hardcoded "dummy" for local-only services
+$env:CLIPROXY_API_KEY = "dummy"
 
 # Internal settings - connects directly to CLIProxyAPI
 $script:_ANTICC_BASE_URL = "http://127.0.0.1:$($script:ANTICC_CLIPROXY_PORT)"
@@ -92,6 +82,35 @@ function Get-ProcessId {
     return $null
 }
 
+# Ensure cliproxyctl is built
+function Ensure-Cliproxyctl {
+    if (-not (Test-Path $script:CLIPROXY_CTL)) {
+        $toolDir = Join-Path $script:ANTICC_DIR "tools\cliproxyctl"
+        $mainGo = Join-Path $toolDir "main.go"
+        if (Test-Path $mainGo) {
+            Write-Log "Building cliproxyctl..."
+            if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+                Write-Warn "Go not installed. Please install Go first."
+                return $false
+            }
+            Push-Location $toolDir
+            try {
+                go build -o cliproxyctl.exe .
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Warn "Failed to build cliproxyctl"
+                    return $false
+                }
+            } finally {
+                Pop-Location
+            }
+        } else {
+            Write-Warn "cliproxyctl source not found at $toolDir"
+            return $false
+        }
+    }
+    return $true
+}
+
 # ============================================================================
 # PROFILE COMMANDS
 # ============================================================================
@@ -131,113 +150,53 @@ function anticc-off {
 function anticc-status {
     <#
     .SYNOPSIS
-    Show service and profile status
+    Show service and profile status (delegated to cliproxyctl)
     #>
-    Write-Host "$($script:C_BOLD)Services:$($script:C_NC)"
-
-    # CLIProxyAPI status
-    if (Test-ProcessRunning "cliproxyapi") {
-        $pid = Get-ProcessId "cliproxyapi"
-        try {
-            $response = Invoke-RestMethod -Uri "http://127.0.0.1:$($script:ANTICC_CLIPROXY_PORT)/" -TimeoutSec 2 -ErrorAction SilentlyContinue
-            $version = if ($response -match 'v[\d.]+') { $matches[0] } else { "?" }
-        } catch { $version = "?" }
-        Write-Host "  CLIProxyAPI:  $($script:C_GREEN)running$($script:C_NC) (PID: $pid, $version) -> :$($script:ANTICC_CLIPROXY_PORT)"
-    } else {
-        Write-Host "  CLIProxyAPI:  $($script:C_RED)stopped$($script:C_NC) (use: anticc-start)"
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL status
     }
 
+    # Add shell-specific profile status
     Write-Host ""
     Write-Host "$($script:C_BOLD)Profile:$($script:C_NC)"
     switch ($env:ANTICC_ENABLED) {
         "true" { Write-Host "  Anticc: $($script:C_GREEN)enabled$($script:C_NC) -> $env:ANTHROPIC_BASE_URL" }
         default { Write-Host "  Anticc: $($script:C_YELLOW)disabled$($script:C_NC)" }
     }
-
-    Write-Host ""
-    Write-Host "$($script:C_BOLD)Updates:$($script:C_NC)"
-    $task = Get-ScheduledTask -TaskName "CLIProxyAPI-AutoUpdate" -ErrorAction SilentlyContinue
-    if ($task) {
-        Write-Host "  Auto-update: $($script:C_GREEN)enabled$($script:C_NC) (every 12h)"
-    } else {
-        Write-Host "  Auto-update: $($script:C_YELLOW)disabled$($script:C_NC) (run: anticc-enable-autoupdate)"
-    }
 }
 
 # ============================================================================
-# SERVICE MANAGEMENT
+# SERVICE MANAGEMENT (delegated to cliproxyctl)
 # ============================================================================
 
 function anticc-start {
     <#
     .SYNOPSIS
-    Start CLIProxyAPI service
+    Start CLIProxyAPI service (delegated to cliproxyctl)
     #>
-    if (Test-ProcessRunning "cliproxyapi") {
-        Write-Log "CLIProxyAPI already running"
-        return
-    }
-
-    $binary = Join-Path $script:CLIPROXY_BIN_DIR "cliproxyapi.exe"
-    if (-not (Test-Path $binary)) {
-        Write-Warn "CLIProxyAPI not found at $binary"
-        Write-Warn "Run: anticc-update to build from source"
-        return
-    }
-
-    $config = Join-Path $env:CLIPROXY_DIR "config.yaml"
-    if (-not (Test-Path $config)) {
-        Write-Warn "Config not found at $config"
-        return
-    }
-
-    # Ensure log directory exists
-    if (-not (Test-Path $script:CLIPROXY_LOG_DIR)) {
-        New-Item -ItemType Directory -Path $script:CLIPROXY_LOG_DIR -Force | Out-Null
-    }
-
-    Write-Log "Starting CLIProxyAPI..."
-    $logFile = Join-Path $script:CLIPROXY_LOG_DIR "cliproxyapi.log"
-
-    # Start as background job
-    Start-Process -FilePath $binary -ArgumentList "--config", "`"$config`"" `
-        -WindowStyle Hidden -RedirectStandardOutput $logFile -RedirectStandardError $logFile
-
-    Start-Sleep -Seconds 2
-
-    if (Test-ProcessRunning "cliproxyapi") {
-        $pid = Get-ProcessId "cliproxyapi"
-        Write-Log "CLIProxyAPI started (PID: $pid)"
-    } else {
-        Write-Warn "Failed to start. Check: $logFile"
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL start
     }
 }
 
 function anticc-stop-service {
     <#
     .SYNOPSIS
-    Stop CLIProxyAPI service
+    Stop CLIProxyAPI service (delegated to cliproxyctl)
     #>
-    Write-Log "Stopping CLIProxyAPI..."
-    Stop-Process -Name "cliproxyapi" -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 1
-
-    if (-not (Test-ProcessRunning "cliproxyapi")) {
-        Write-Log "CLIProxyAPI stopped"
-    } else {
-        Write-Warn "CLIProxyAPI still running, force killing..."
-        Stop-Process -Name "cliproxyapi" -Force -ErrorAction SilentlyContinue
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL stop
     }
 }
 
 function anticc-restart-service {
     <#
     .SYNOPSIS
-    Restart CLIProxyAPI service
+    Restart CLIProxyAPI service (delegated to cliproxyctl)
     #>
-    anticc-stop-service
-    Start-Sleep -Seconds 1
-    anticc-start
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL restart
+    }
 }
 
 # ============================================================================
@@ -247,83 +206,31 @@ function anticc-restart-service {
 function anticc-version {
     <#
     .SYNOPSIS
-    Show version info (running, binary, source, remote)
+    Show version info (delegated to cliproxyctl)
     #>
-    Write-Host "$($script:C_BOLD)CLIProxyAPI Versions:$($script:C_NC)"
-
-    # Running version
-    if (Test-ProcessRunning "cliproxyapi") {
-        try {
-            $response = Invoke-WebRequest -Uri "http://127.0.0.1:$($script:ANTICC_CLIPROXY_PORT)/" -TimeoutSec 2 -ErrorAction SilentlyContinue
-            $running = if ($response.Content -match 'v[\d.]+') { $matches[0] } else { "unknown" }
-        } catch { $running = "unknown" }
-        Write-Host "  Running: $($script:C_GREEN)$running$($script:C_NC)"
-    } else {
-        Write-Host "  Running: $($script:C_RED)not running$($script:C_NC)"
-    }
-
-    # Binary version
-    $binary = Join-Path $script:CLIPROXY_BIN_DIR "cliproxyapi.exe"
-    if (Test-Path $binary) {
-        $output = & $binary 2>&1 | Select-String "Version:" | Select-Object -First 1
-        $binaryVer = if ($output -match 'Version:\s*([^,]+)') { $matches[1] } else { "unknown" }
-        Write-Host "  Binary:  $binaryVer"
-    } else {
-        Write-Host "  Binary:  $($script:C_RED)not installed$($script:C_NC)"
-    }
-
-    # Source version
-    if (Test-Path $script:CLIPROXY_SOURCE_DIR) {
-        Push-Location $script:CLIPROXY_SOURCE_DIR
-        $sourceVer = git describe --tags --always 2>$null
-        Write-Host "  Source:  $sourceVer"
-
-        # Check for updates
-        git fetch --tags --quiet 2>$null
-        $remoteVer = git describe --tags origin/main 2>$null
-        if ($remoteVer -and $sourceVer -ne $remoteVer) {
-            Write-Host "  Remote:  $($script:C_YELLOW)$remoteVer$($script:C_NC) (update available!)"
-        }
-        Pop-Location
-    } else {
-        Write-Host "  Source:  $($script:C_RED)not found$($script:C_NC)"
-    }
-
-    # Backup version
-    $backup = Join-Path $script:CLIPROXY_BIN_DIR "cliproxyapi.bak.exe"
-    if (Test-Path $backup) {
-        $output = & $backup 2>&1 | Select-String "Version:" | Select-Object -First 1
-        $backupVer = if ($output -match 'Version:\s*([^,]+)') { $matches[1] } else { "unknown" }
-        Write-Host "  Backup:  $backupVer (for rollback)"
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL status
     }
 }
 
 function anticc-update {
     <#
     .SYNOPSIS
-    Pull latest and rebuild CLIProxyAPI
+    Pull latest and rebuild CLIProxyAPI (delegated to cliproxyctl)
     #>
-    if (-not (Test-Path $script:CLIPROXY_UPDATER)) {
-        Write-Warn "Updater script not found at $($script:CLIPROXY_UPDATER)"
-        return
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL update @args
     }
-
-    Write-Log "Running CLIProxyAPI update..."
-    & $script:CLIPROXY_UPDATER -Action update
 }
 
 function anticc-rollback {
     <#
     .SYNOPSIS
-    Rollback to previous version
+    Rollback to previous version (delegated to cliproxyctl)
     #>
-    if (-not (Test-Path $script:CLIPROXY_UPDATER)) {
-        Write-Warn "Updater script not found"
-        return
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL rollback @args
     }
-
-    Write-Warn "Rolling back to previous version..."
-    & $script:CLIPROXY_UPDATER -Action rollback
 }
 
 # ============================================================================
@@ -412,113 +319,51 @@ function anticc-disable-startup {
 }
 
 # ============================================================================
+# LOG VIEWING (delegated to cliproxyctl)
+# ============================================================================
+
+function anticc-logs {
+    <#
+    .SYNOPSIS
+    View CLIProxyAPI logs (delegated to cliproxyctl)
+    .PARAMETER Follow
+    Follow log output (like tail -f)
+    .PARAMETER Lines
+    Number of lines to show (default: 50)
+    .PARAMETER All
+    Open full log in pager
+    #>
+    param(
+        [Alias("f")]
+        [switch]$Follow,
+        [Alias("n")]
+        [int]$Lines = 50,
+        [switch]$All
+    )
+
+    if (-not (Ensure-Cliproxyctl)) { return }
+
+    if ($Follow) {
+        & $script:CLIPROXY_CTL logs -f
+    } elseif ($All) {
+        & $script:CLIPROXY_CTL logs --all
+    } else {
+        & $script:CLIPROXY_CTL logs -n $Lines
+    }
+}
+
+# ============================================================================
 # DIAGNOSTICS
 # ============================================================================
 
 function anticc-diagnose {
     <#
     .SYNOPSIS
-    Run full diagnostics
+    Run full diagnostics (delegated to cliproxyctl)
     #>
-    Write-Host "$($script:C_BOLD)=== Antigravity Diagnostics (Windows) ===$($script:C_NC)"
-    Write-Host ""
-
-    # Check CLIProxyAPI installation
-    Write-Host "$($script:C_BOLD)1. CLIProxyAPI Installation:$($script:C_NC)"
-    $binary = Join-Path $script:CLIPROXY_BIN_DIR "cliproxyapi.exe"
-    if (Test-Path $binary) {
-        Write-Host "   Binary: $binary"
-        $output = & $binary 2>&1 | Select-String "Version:" | Select-Object -First 1
-        Write-Host "   $output"
-    } else {
-        Write-Host "   $($script:C_RED)NOT INSTALLED$($script:C_NC) - run: anticc-update"
+    if (Ensure-Cliproxyctl) {
+        & $script:CLIPROXY_CTL diagnose @args
     }
-    Write-Host ""
-
-    # Check source repo
-    Write-Host "$($script:C_BOLD)2. Source Repository:$($script:C_NC)"
-    if (Test-Path $script:CLIPROXY_SOURCE_DIR) {
-        Write-Host "   Path: $($script:CLIPROXY_SOURCE_DIR)"
-        Push-Location $script:CLIPROXY_SOURCE_DIR
-        $ver = git describe --tags --always 2>$null
-        $branch = git branch --show-current 2>$null
-        Write-Host "   Version: $ver"
-        Write-Host "   Branch: $branch"
-        Pop-Location
-    } else {
-        Write-Host "   $($script:C_RED)NOT FOUND$($script:C_NC) at $($script:CLIPROXY_SOURCE_DIR)"
-    }
-    Write-Host ""
-
-    # Check config
-    Write-Host "$($script:C_BOLD)3. Configuration:$($script:C_NC)"
-    $config = Join-Path $env:CLIPROXY_DIR "config.yaml"
-    if (Test-Path $config) {
-        Write-Host "   Config: $config"
-    } else {
-        Write-Host "   Config: $($script:C_RED)NOT FOUND$($script:C_NC)"
-    }
-    Write-Host ""
-
-    # Check API key
-    Write-Host "$($script:C_BOLD)4. API Key:$($script:C_NC)"
-    if ($env:CLIPROXY_API_KEY) {
-        Write-Host "   CLIPROXY_API_KEY: $($script:C_GREEN)set$($script:C_NC) ($($env:CLIPROXY_API_KEY.Length) chars)"
-    } else {
-        Write-Host "   CLIPROXY_API_KEY: $($script:C_RED)NOT SET$($script:C_NC)"
-    }
-    Write-Host ""
-
-    # Check ports
-    Write-Host "$($script:C_BOLD)5. Ports:$($script:C_NC)"
-    $cliproxyPort = Get-NetTCPConnection -LocalPort $script:ANTICC_CLIPROXY_PORT -ErrorAction SilentlyContinue
-    if ($cliproxyPort) {
-        Write-Host "   Port $($script:ANTICC_CLIPROXY_PORT): $($script:C_GREEN)in use$($script:C_NC) (PID: $($cliproxyPort.OwningProcess | Select-Object -First 1))"
-    } else {
-        Write-Host "   Port $($script:ANTICC_CLIPROXY_PORT): $($script:C_YELLOW)free$($script:C_NC)"
-    }
-    Write-Host ""
-
-    # Check scheduled tasks
-    Write-Host "$($script:C_BOLD)6. Scheduled Tasks:$($script:C_NC)"
-    $startupTask = Get-ScheduledTask -TaskName "CLIProxyAPI-Startup" -ErrorAction SilentlyContinue
-    if ($startupTask) {
-        Write-Host "   CLIProxyAPI-Startup: $($script:C_GREEN)registered$($script:C_NC)"
-    } else {
-        Write-Host "   CLIProxyAPI-Startup: $($script:C_YELLOW)not registered$($script:C_NC)"
-    }
-
-    $updateTask = Get-ScheduledTask -TaskName "CLIProxyAPI-AutoUpdate" -ErrorAction SilentlyContinue
-    if ($updateTask) {
-        Write-Host "   CLIProxyAPI-AutoUpdate: $($script:C_GREEN)registered$($script:C_NC)"
-    } else {
-        Write-Host "   CLIProxyAPI-AutoUpdate: $($script:C_YELLOW)not registered$($script:C_NC)"
-    }
-    Write-Host ""
-
-    # Check logs
-    Write-Host "$($script:C_BOLD)7. Recent Logs:$($script:C_NC)"
-    $logFile = Join-Path $script:CLIPROXY_LOG_DIR "cliproxyapi.log"
-    if (Test-Path $logFile) {
-        Write-Host "   Last 3 lines of $logFile :"
-        Get-Content $logFile -Tail 3 | ForEach-Object { Write-Host "   $_" }
-    } else {
-        Write-Host "   No log file at $logFile"
-    }
-    Write-Host ""
-
-    # Connectivity test
-    Write-Host "$($script:C_BOLD)7. Connectivity Test:$($script:C_NC)"
-    try {
-        $headers = @{ "Authorization" = "Bearer $($env:CLIPROXY_API_KEY)" }
-        $null = Invoke-RestMethod -Uri "http://127.0.0.1:$($script:ANTICC_CLIPROXY_PORT)/v1/models" -Headers $headers -TimeoutSec 2
-        Write-Host "   CLIProxyAPI ($($script:ANTICC_CLIPROXY_PORT)): $($script:C_GREEN)responding$($script:C_NC)"
-    } catch {
-        Write-Host "   CLIProxyAPI ($($script:ANTICC_CLIPROXY_PORT)): $($script:C_RED)not responding$($script:C_NC)"
-    }
-    Write-Host ""
-
-    Write-Host "$($script:C_BOLD)=== End Diagnostics ===$($script:C_NC)"
 }
 
 # ============================================================================
@@ -528,7 +373,7 @@ function anticc-diagnose {
 function anticc-quota {
     <#
     .SYNOPSIS
-    Check Antigravity quota for all accounts (CLI mode by default)
+    Check Antigravity quota for all accounts (delegated to cliproxyctl)
     .PARAMETER Web
     Start web server with dashboard
     .PARAMETER Port
@@ -539,41 +384,13 @@ function anticc-quota {
         [int]$Port = 8318
     )
 
-    $toolDir = Join-Path $script:ANTICC_DIR "tools\check-quota"
-    $binary = Join-Path $toolDir "check-quota.exe"
-    $sourceFile = Join-Path $toolDir "main.go"
-
-    # Build if not exists or source is newer
-    $needsBuild = $false
-    if (-not (Test-Path $binary)) {
-        $needsBuild = $true
-    } elseif ((Test-Path $sourceFile) -and ((Get-Item $sourceFile).LastWriteTime -gt (Get-Item $binary).LastWriteTime)) {
-        $needsBuild = $true
-    }
-
-    if ($needsBuild) {
-        Write-Log "Building check-quota tool..."
-        if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-            Write-Warn "Go not installed. Install Go to use this feature."
-            return
-        }
-        Push-Location $toolDir
-        try {
-            go build -o check-quota.exe .
-            if ($LASTEXITCODE -ne 0) {
-                Write-Warn "Failed to build check-quota tool"
-                return
-            }
-        } finally {
-            Pop-Location
-        }
-    }
+    if (-not (Ensure-Cliproxyctl)) { return }
 
     if ($Web) {
         Write-Log "Starting quota dashboard on http://127.0.0.1:$Port"
-        & $binary --web --port $Port
+        & $script:CLIPROXY_CTL quota --web --port $Port
     } else {
-        & $binary
+        & $script:CLIPROXY_CTL quota
     }
 }
 
@@ -614,26 +431,28 @@ function anticc-help {
     Show anticc help
     #>
     Write-Host @"
-anticc - Antigravity Claude Code CLI (Windows)
+anticc - Antigravity Claude Code CLI (Windows - Thin Wrapper)
 
 Architecture:
   Claude Code -> CLIProxyAPI (8317) -> Antigravity -> Google AI
 
-Profile Commands:
+Profile Commands (shell-based - modifies environment):
   anticc-on              Enable Antigravity mode (set env vars)
   anticc-off             Disable Antigravity mode (unset env vars)
-  anticc-status          Show service and profile status
   anticc-login           Login to Antigravity (add Google account)
 
-Service Commands:
+Delegated to cliproxyctl:
+  anticc-status          Show service and profile status
+  anticc-version         Show version info (running, binary, source, remote)
   anticc-start           Start CLIProxyAPI service
   anticc-stop-service    Stop CLIProxyAPI service
   anticc-restart-service Restart CLIProxyAPI service
-
-Update Commands:
-  anticc-version         Show version info (running, binary, source, remote)
   anticc-update          Pull latest and rebuild CLIProxyAPI
   anticc-rollback        Rollback to previous version if update fails
+  anticc-diagnose        Run full diagnostics
+  anticc-quota           Check Antigravity quota for all accounts (CLI)
+  anticc-quota -Web      Open quota dashboard in browser
+  anticc-logs [-f|-n N|--all]  View CLIProxyAPI logs
 
 Auto-Update:
   anticc-enable-autoupdate   Enable 12-hour auto-update via Task Scheduler
@@ -643,21 +462,16 @@ Startup:
   anticc-enable-startup      Start CLIProxyAPI on Windows login
   anticc-disable-startup     Disable startup on login
 
-Quota Commands:
-  anticc-quota           Check Antigravity quota for all accounts (CLI)
-  anticc-quota -Web      Open quota dashboard in browser
-  anticc-quota-web [port] Open quota dashboard (default port: 8318)
-
-Diagnostics:
-  anticc-diagnose        Run full diagnostics
+Other:
   anticc-help            Show this help
 
 Files:
-  Binary:   `$env:LOCALAPPDATA\Programs\CLIProxyAPI\cliproxyapi.exe
-  Source:   $($script:CLIPROXY_SOURCE_DIR)
-  Config:   `$env:CLIPROXY_DIR\config.yaml
-  Logs:     `$env:LOCALAPPDATA\CLIProxyAPI\logs\cliproxyapi.log
-  Updater:  $($script:CLIPROXY_UPDATER)
+  Binary:    `$env:LOCALAPPDATA\Programs\CLIProxyAPI\cliproxyapi.exe
+  CLI Tool:  tools\cliproxyctl\cliproxyctl.exe
+  Config:    config.yaml
+  Logs:      `$env:LOCALAPPDATA\CLIProxyAPI\logs\cliproxyapi.log
+
+API Key: "dummy" (hardcoded for local-only services)
 
 Environment variables are auto-exported when sourced (for IDE plugins).
 To disable: `$env:ANTICC_AUTO_ENABLE = "false" before sourcing.
