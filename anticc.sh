@@ -471,52 +471,107 @@ anticc-quota-web() {
 # LOG VIEWING
 # ============================================================================
 
+# Log file paths
+CLIPROXY_LOG_FILE="$HOME/.local/var/log/cliproxyapi.log"
+CLIPROXY_UPDATER_LOG="$HOME/.local/var/log/cliproxy-updater.log"
+
 # View CLIProxyAPI logs (like brew services log)
 anticc-logs() {
-    local log_file="$HOME/.local/var/log/cliproxyapi.log"
-    local lines="${1:-50}"
+    local arg="${1:-50}"
     
-    if [[ ! -f "$log_file" ]]; then
-        _warn "Log file not found at $log_file"
+    if [[ ! -f "$CLIPROXY_LOG_FILE" ]]; then
+        _warn "Log file not found at $CLIPROXY_LOG_FILE"
         return 1
     fi
     
-    case "$lines" in
+    case "$arg" in
         -f|--follow|follow)
-            _log "Following logs (Ctrl+C to stop)..."
-            tail -f "$log_file"
+            _log "Following logs at $CLIPROXY_LOG_FILE (Ctrl+C to stop)..."
+            exec tail -F "$CLIPROXY_LOG_FILE"
             ;;
         -a|--all|all)
-            less "$log_file"
+            less +G "$CLIPROXY_LOG_FILE"
             ;;
         *)
-            tail -n "$lines" "$log_file"
+            tail -n "$arg" "$CLIPROXY_LOG_FILE"
             ;;
     esac
 }
 
 # View updater logs
 anticc-logs-updater() {
-    local log_file="$HOME/.local/var/log/cliproxy-updater.log"
-    local lines="${1:-50}"
+    local arg="${1:-50}"
     
-    if [[ ! -f "$log_file" ]]; then
-        _warn "Updater log file not found at $log_file"
+    if [[ ! -f "$CLIPROXY_UPDATER_LOG" ]]; then
+        _warn "Updater log file not found at $CLIPROXY_UPDATER_LOG"
         return 1
     fi
     
-    case "$lines" in
+    case "$arg" in
         -f|--follow|follow)
             _log "Following updater logs (Ctrl+C to stop)..."
-            tail -f "$log_file"
+            exec tail -F "$CLIPROXY_UPDATER_LOG"
             ;;
         -a|--all|all)
-            less "$log_file"
+            less +G "$CLIPROXY_UPDATER_LOG"
             ;;
         *)
-            tail -n "$lines" "$log_file"
+            tail -n "$arg" "$CLIPROXY_UPDATER_LOG"
             ;;
     esac
+}
+
+# Clear/rotate log files
+anticc-logs-clear() {
+    local log_file="$CLIPROXY_LOG_FILE"
+    
+    if [[ ! -f "$log_file" ]]; then
+        _warn "Log file not found"
+        return 1
+    fi
+    
+    local size=$(du -h "$log_file" | cut -f1)
+    _log "Current log size: $size"
+    
+    # Backup old log with timestamp
+    local backup="${log_file}.$(date +%Y%m%d_%H%M%S)"
+    mv "$log_file" "$backup"
+    touch "$log_file"
+    
+    # Compress the backup
+    gzip "$backup" 2>/dev/null &
+    
+    _log "Log cleared. Old log backed up to ${backup}.gz"
+    _log "Restarting service to apply..."
+    anticc-restart-service
+}
+
+# Show log file info
+anticc-logs-info() {
+    echo "${_C_BOLD}Log Files:${_C_NC}"
+    
+    if [[ -f "$CLIPROXY_LOG_FILE" ]]; then
+        local size=$(du -h "$CLIPROXY_LOG_FILE" | cut -f1)
+        local lines=$(wc -l < "$CLIPROXY_LOG_FILE")
+        local modified=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$CLIPROXY_LOG_FILE" 2>/dev/null || stat -c "%y" "$CLIPROXY_LOG_FILE" 2>/dev/null | cut -d. -f1)
+        echo "  CLIProxyAPI: $CLIPROXY_LOG_FILE"
+        echo "    Size: $size, Lines: $lines, Modified: $modified"
+    else
+        echo "  CLIProxyAPI: ${_C_RED}not found${_C_NC}"
+    fi
+    
+    if [[ -f "$CLIPROXY_UPDATER_LOG" ]]; then
+        local size=$(du -h "$CLIPROXY_UPDATER_LOG" | cut -f1)
+        local lines=$(wc -l < "$CLIPROXY_UPDATER_LOG")
+        echo "  Updater: $CLIPROXY_UPDATER_LOG"
+        echo "    Size: $size, Lines: $lines"
+    fi
+    
+    # Show backups
+    local backups=$(ls -1 "${CLIPROXY_LOG_FILE}"*.gz 2>/dev/null | wc -l)
+    if [[ $backups -gt 0 ]]; then
+        echo "  Backups: $backups compressed log files"
+    fi
 }
 
 # ============================================================================
@@ -556,6 +611,8 @@ Quota Commands:
 Log Commands:
   anticc-logs [N|-f|-a]  View CLIProxyAPI logs (N lines, -f follow, -a all)
   anticc-logs-updater    View auto-updater logs
+  anticc-logs-clear      Clear logs (backup + restart service)
+  anticc-logs-info       Show log file sizes and info
 
 Diagnostics:
   anticc-diagnose        Run full diagnostics
