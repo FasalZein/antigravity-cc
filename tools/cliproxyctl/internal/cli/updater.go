@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -280,20 +279,22 @@ func restartCCR() {
 	}
 
 	log("Restarting CCR...")
-	killProcessCrossPlatform("claude-code-router")
+	
+	// Stop CCR using its own stop command (more reliable than killing process)
+	stopCmd := exec.Command(ccrBin, "stop")
+	stopCmd.Run()
 	time.Sleep(1 * time.Second)
 
-	// Use context with timeout to prevent hanging
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, ccrBin, "start")
+	// Start CCR
+	cmd := exec.Command(ccrBin, "start")
 	cmd.Start()
 
-	// Wait up to 3 seconds for CCR to start
+	// Wait up to 3 seconds and check using ccr status
 	for i := 0; i < 6; i++ {
 		time.Sleep(500 * time.Millisecond)
-		if isProcessRunningCrossPlatform("claude-code-router") {
+		statusCmd := exec.Command(ccrBin, "status")
+		out, _ := statusCmd.CombinedOutput()
+		if strings.Contains(string(out), "Running") {
 			log("CCR restarted")
 			return
 		}

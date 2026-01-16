@@ -156,11 +156,15 @@ func getBinaryVersion(binPath string) string {
 
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, "Version:") {
-			// Extract version: "Version: v1.2.3," -> "v1.2.3"
+			// Extract version: "Version: v1.2.3, Commit: ..." -> "v1.2.3"
 			parts := strings.Split(line, "Version:")
 			if len(parts) > 1 {
 				version := strings.TrimSpace(parts[1])
-				version = strings.TrimSuffix(version, ",")
+				// Stop at comma or space after version
+				if idx := strings.Index(version, ","); idx > 0 {
+					version = version[:idx]
+				}
+				version = strings.TrimSpace(version)
 				return version
 			}
 		}
