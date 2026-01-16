@@ -788,11 +788,51 @@ func openBrowserURL(url string) {
 // Shared Functions
 // ============================================================================
 
+// cleanJSONBytes removes BOM and null bytes from JSON data (Windows encoding fix)
+func cleanJSONBytes(data []byte) []byte {
+	// Remove UTF-8 BOM if present
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		data = data[3:]
+	}
+	// Remove UTF-16 LE BOM and convert (common Windows issue)
+	if len(data) >= 2 && data[0] == 0xFF && data[1] == 0xFE {
+		// UTF-16 LE - remove null bytes
+		var cleaned []byte
+		for i := 2; i < len(data); i++ {
+			if data[i] != 0x00 {
+				cleaned = append(cleaned, data[i])
+			}
+		}
+		return cleaned
+	}
+	// Remove UTF-16 BE BOM
+	if len(data) >= 2 && data[0] == 0xFE && data[1] == 0xFF {
+		var cleaned []byte
+		for i := 2; i < len(data); i++ {
+			if data[i] != 0x00 {
+				cleaned = append(cleaned, data[i])
+			}
+		}
+		return cleaned
+	}
+	// Remove any null bytes (UTF-16 saved as UTF-8)
+	var cleaned []byte
+	for _, b := range data {
+		if b != 0x00 {
+			cleaned = append(cleaned, b)
+		}
+	}
+	return cleaned
+}
+
 func fetchQuotaForFile(client *http.Client, filePath string) ([]ModelQuota, string, string, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("read file: %w", err)
 	}
+
+	// Clean the data for Windows encoding issues
+	data = cleanJSONBytes(data)
 
 	var authFile AuthFile
 	if err := json.Unmarshal(data, &authFile); err != nil {
@@ -1234,6 +1274,9 @@ func fetchCodexQuotas(client *http.Client) []CodexAccountQuota {
 			if err != nil {
 				return
 			}
+
+			// Clean the data for Windows encoding issues
+			data = cleanJSONBytes(data)
 
 			var authFile CodexAuthFile
 			if err := json.Unmarshal(data, &authFile); err != nil {
