@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -124,13 +125,34 @@ func getSourceVersion(sourceDir string) string {
 }
 
 // getBinaryVersion returns the version of the installed binary
+// Uses a 5-second timeout to prevent hanging if the binary doesn't respond
 func getBinaryVersion(binPath string) string {
 	if _, err := os.Stat(binPath); err != nil {
 		return "not installed"
 	}
 
-	cmd := exec.Command(binPath)
-	out, _ := cmd.CombinedOutput()
+	// Create context with 5-second timeout to prevent hanging
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Use --version flag to get version info without starting the server
+	cmd := exec.CommandContext(ctx, binPath, "--version")
+	out, err := cmd.CombinedOutput()
+
+	// Check if timeout occurred
+	if ctx.Err() == context.DeadlineExceeded {
+		return "timeout"
+	}
+	if err != nil {
+		// If --version flag is not supported, try without args (legacy)
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel2()
+		cmd2 := exec.CommandContext(ctx2, binPath)
+		out, _ = cmd2.CombinedOutput()
+		if ctx2.Err() == context.DeadlineExceeded {
+			return "timeout"
+		}
+	}
 
 	for _, line := range strings.Split(string(out), "\n") {
 		if strings.Contains(line, "Version:") {
