@@ -826,6 +826,11 @@ func fetchQuotaForFile(client *http.Client, filePath string) ([]ModelQuota, stri
 		return nil, authFile.Email, tierName, err
 	}
 
+	// If quotas is nil (403 response), this is a free tier account
+	if quotas == nil && tierName == "" {
+		tierName = "Free"
+	}
+
 	return quotas, authFile.Email, tierName, nil
 }
 
@@ -946,7 +951,8 @@ func fetchQuota(client *http.Client, accessToken, projectID string) ([]ModelQuot
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 403 {
-		return nil, fmt.Errorf("access forbidden (403)")
+		// Free tier accounts don't have quota API access - return empty quotas, not an error
+		return nil, nil
 	}
 
 	if resp.StatusCode != 200 {
