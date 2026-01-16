@@ -45,3 +45,4 @@ tools/cliproxyctl/cliproxyctl
 # Cloned source directories (independent git repos)
 cliproxy-source/
 quotio/
+ccs/
