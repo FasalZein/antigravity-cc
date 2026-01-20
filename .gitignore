@@ -41,6 +41,7 @@ issue_streaming_token_count.md
 tools/check-quota/check-quota
 tools/check-status/
 tools/cliproxyctl/cliproxyctl
+tools/cliproxyctl/cliproxyctl.exe
 
 # Cloned source directories (independent git repos)
 cliproxy-source/

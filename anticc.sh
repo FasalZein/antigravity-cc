@@ -13,7 +13,7 @@
 #   anticc-quota, anticc-start, anticc-stop-service, anticc-restart-service, anticc-logs
 #
 # Commands handled by shell (require shell integration):
-#   anticc-on, anticc-off (environment variable management - must modify parent shell)
+#   anticc-ccr-on, anticc-ccr-off, anticc-ccr-status (persistent CCR toggle)
 # ============================================================================
 
 # Detect script directory
@@ -34,6 +34,7 @@ export CLIPROXY_DIR="${CLIPROXY_DIR:-$ANTICC_DIR}"
 # Paths
 CLIPROXY_BIN_DIR="${HOME}/.local/bin"
 CLIPROXY_CTL="${ANTICC_DIR}/tools/cliproxyctl/cliproxyctl"
+ANTICC_STATE_FILE="${HOME}/.cli-proxy-api/anticc-state"
 
 # API key - .env file takes precedence, then env var, then "dummy" default
 if [[ -f "${ANTICC_DIR}/.env" ]]; then
@@ -44,9 +45,23 @@ if [[ -f "${ANTICC_DIR}/.env" ]]; then
 fi
 export CLIPROXY_API_KEY="${CLIPROXY_API_KEY:-dummy}"
 
-# Internal settings (exported when anticc-on is called)
-_ANTICC_BASE_URL="http://127.0.0.1:${ANTICC_CCR_PORT}"
+# Load persistent CCR state (default: enabled)
+# State file contains either "ccr" or "direct"
+_ANTICC_CCR_MODE="ccr"
+if [[ -f "$ANTICC_STATE_FILE" ]]; then
+    _saved_mode=$(cat "$ANTICC_STATE_FILE" 2>/dev/null)
+    if [[ "$_saved_mode" == "direct" ]]; then
+        _ANTICC_CCR_MODE="direct"
+    fi
+fi
+
+# Internal settings - depends on CCR mode
 _ANTICC_API_KEY="$CLIPROXY_API_KEY"
+if [[ "$_ANTICC_CCR_MODE" == "direct" ]]; then
+    _ANTICC_BASE_URL="http://127.0.0.1:${ANTICC_CLIPROXY_PORT}"
+else
+    _ANTICC_BASE_URL="http://127.0.0.1:${ANTICC_CCR_PORT}"
+fi
 
 # Model configuration
 _ANTICC_OPUS_MODEL="gemini-claude-opus-4-5-thinking"
@@ -105,27 +120,55 @@ _is_running() { pgrep -f "$1" >/dev/null 2>&1; }
 _get_pid() { pgrep -f "$1" 2>/dev/null | head -1; }
 
 # ============================================================================
-# PROFILE COMMANDS (Shell-only - manages environment variables)
+# CCR TOGGLE COMMANDS (persistent - survives terminal restarts)
 # ============================================================================
 
-anticc-on() {
+# Enable CCR (persistent - saved to file)
+anticc-ccr-on() {
+    mkdir -p "$(dirname "$ANTICC_STATE_FILE")"
+    echo "ccr" > "$ANTICC_STATE_FILE"
+    _ANTICC_CCR_MODE="ccr"
+    _ANTICC_BASE_URL="http://127.0.0.1:${ANTICC_CCR_PORT}"
     export ANTHROPIC_BASE_URL="$_ANTICC_BASE_URL"
     export ANTHROPIC_API_KEY="$_ANTICC_API_KEY"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="$_ANTICC_OPUS_MODEL"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$_ANTICC_SONNET_MODEL"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$_ANTICC_HAIKU_MODEL"
     export ANTICC_ENABLED="true"
-    _log "Antigravity mode ${_C_GREEN}enabled${_C_NC} → CCR (:${ANTICC_CCR_PORT})"
+    _log "CCR mode ${_C_GREEN}enabled${_C_NC} → CCR (:${ANTICC_CCR_PORT}) [persistent]"
+    _log "Setting saved. New terminals will use CCR."
 }
 
-anticc-off() {
-    export ANTHROPIC_BASE_URL="http://127.0.0.1:${ANTICC_CLIPROXY_PORT}"
+# Disable CCR (persistent - saved to file)
+anticc-ccr-off() {
+    mkdir -p "$(dirname "$ANTICC_STATE_FILE")"
+    echo "direct" > "$ANTICC_STATE_FILE"
+    _ANTICC_CCR_MODE="direct"
+    _ANTICC_BASE_URL="http://127.0.0.1:${ANTICC_CLIPROXY_PORT}"
+    export ANTHROPIC_BASE_URL="$_ANTICC_BASE_URL"
     export ANTHROPIC_API_KEY="$_ANTICC_API_KEY"
     export ANTHROPIC_DEFAULT_OPUS_MODEL="$_ANTICC_OPUS_MODEL"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$_ANTICC_SONNET_MODEL"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$_ANTICC_HAIKU_MODEL"
     export ANTICC_ENABLED="direct"
-    _log "Direct mode ${_C_YELLOW}enabled${_C_NC} → CLIProxyAPI (:${ANTICC_CLIPROXY_PORT}) [bypassing CCR]"
+    _log "Direct mode ${_C_YELLOW}enabled${_C_NC} → CLIProxyAPI (:${ANTICC_CLIPROXY_PORT}) [persistent]"
+    _log "Setting saved. New terminals will bypass CCR."
+}
+
+# Show current CCR mode
+anticc-ccr-status() {
+    echo "${_C_BOLD}CCR Mode:${_C_NC}"
+    if [[ "$_ANTICC_CCR_MODE" == "direct" ]]; then
+        echo "  Persistent: ${_C_YELLOW}direct${_C_NC} (bypassing CCR)"
+        echo "  Endpoint:   http://127.0.0.1:${ANTICC_CLIPROXY_PORT}"
+    else
+        echo "  Persistent: ${_C_GREEN}ccr${_C_NC} (via CCR)"
+        echo "  Endpoint:   http://127.0.0.1:${ANTICC_CCR_PORT}"
+    fi
+    echo "  State file: $ANTICC_STATE_FILE"
+    echo ""
+    echo "${_C_BOLD}Current Session:${_C_NC}"
+    echo "  ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL:-not set}"
 }
 
 # ============================================================================
@@ -317,13 +360,25 @@ anticc-logs-info() {
 # ============================================================================
 
 anticc-up() {
-    _warn "anticc-up is deprecated. Use: anticc-start"
+    _warn "anticc-up is deprecated. Use: anticc-start && anticc-ccr-on"
     anticc-start
-    anticc-on
+    anticc-ccr-on
 }
 
 anticc-down() {
-    anticc-off
+    _warn "anticc-down is deprecated. Use: anticc-ccr-off"
+    anticc-ccr-off
+}
+
+# Old anticc-on/anticc-off now redirect to persistent versions
+anticc-on() {
+    _warn "anticc-on is deprecated. Use: anticc-ccr-on (persistent)"
+    anticc-ccr-on
+}
+
+anticc-off() {
+    _warn "anticc-off is deprecated. Use: anticc-ccr-off (persistent)"
+    anticc-ccr-off
 }
 
 anticc-stop() {
@@ -349,29 +404,35 @@ anticc - Antigravity Claude Code CLI (Thin Wrapper)
 
 Architecture:
   Claude Code → CCR (3456) → CLIProxyAPI (8317) → Antigravity
+  Or direct:   Claude Code → CLIProxyAPI (8317) → Antigravity
 
-Profile Commands (shell-based - modifies environment):
-  anticc-on              Enable Antigravity mode (set env vars via CCR)
-  anticc-off             Direct mode (bypass CCR, connect to CLIProxyAPI)
+CCR Toggle (persistent - survives terminal restarts):
+  anticc-ccr-on          Enable CCR mode (via CCR port 3456)
+  anticc-ccr-off         Disable CCR, connect directly to CLIProxyAPI (port 8317)
+  anticc-ccr-status      Show current CCR mode
 
-Delegated to cliproxyctl:
+Service Commands:
   anticc-status          Show service and profile status
-  anticc-version         Show version info (running, binary, source, remote)
   anticc-start           Start CLIProxyAPI service
   anticc-stop-service    Stop CLIProxyAPI service
   anticc-restart-service Restart CLIProxyAPI service
+
+Update Commands:
   anticc-update          Pull latest and rebuild CLIProxyAPI
   anticc-rollback        Rollback to previous version if update fails
-  anticc-diagnose        Run full diagnostics
+  anticc-version         Show version info
+
+Quota & Diagnostics:
   anticc-quota           Check Antigravity quota for all accounts (CLI)
   anticc-quota-web [port] Open quota dashboard in browser (default: 8318)
-  anticc-logs [-n N|-a]    View CLIProxyAPI logs (default: follow, -n N lines, -a all)
+  anticc-diagnose        Run full diagnostics
 
 Auto-Update:
   anticc-enable-autoupdate   Enable 12-hour auto-update via launchd
   anticc-disable-autoupdate  Disable auto-update
 
-Log Helpers (shell-based):
+Log Commands:
+  anticc-logs [-n N|-a]  View CLIProxyAPI logs (default: follow, -n N lines, -a all)
   anticc-logs-updater    View auto-updater logs
   anticc-logs-clear      Clear logs (backup + restart service)
   anticc-logs-info       Show log file sizes and info
@@ -384,6 +445,7 @@ Files:
   CLI Tool:    tools/cliproxyctl/cliproxyctl
   Config:      config.yaml
   Logs:        ~/.local/var/log/cliproxyapi.log
+  CCR State:   ~/.cli-proxy-api/anticc-state
 
 Environment variables are auto-exported when sourced (for IDE plugins).
 To disable: export ANTICC_AUTO_ENABLE=false before sourcing.
@@ -399,5 +461,10 @@ if [[ "$ANTICC_AUTO_ENABLE" == "true" ]]; then
     export ANTHROPIC_DEFAULT_OPUS_MODEL="$_ANTICC_OPUS_MODEL"
     export ANTHROPIC_DEFAULT_SONNET_MODEL="$_ANTICC_SONNET_MODEL"
     export ANTHROPIC_DEFAULT_HAIKU_MODEL="$_ANTICC_HAIKU_MODEL"
-    export ANTICC_ENABLED="true"
+    # Set ANTICC_ENABLED based on CCR mode
+    if [[ "$_ANTICC_CCR_MODE" == "direct" ]]; then
+        export ANTICC_ENABLED="direct"
+    else
+        export ANTICC_ENABLED="true"
+    fi
 fi
