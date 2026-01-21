@@ -19,7 +19,7 @@ fi
 export PATH="$HOME/go/bin:$HOME/.local/bin:/usr/local/go/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
 export GOPATH="${GOPATH:-$HOME/go}"
 
-# cliproxyctl location
+# cliproxyctl location (built in-place in tools folder)
 CLIPROXYCTL="${SCRIPT_DIR}/tools/cliproxyctl/cliproxyctl"
 
 # Ensure cliproxyctl is built

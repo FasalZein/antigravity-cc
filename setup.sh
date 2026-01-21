@@ -294,13 +294,28 @@ build_cliproxy() {
         error "Build failed!"
     fi
 
-    # Build cliproxyctl (quota dashboard tool)
+    # Build cliproxyctl (quota dashboard tool) - built in-place in tools folder
     log "Building cliproxyctl..."
-    cd "$CLIPROXY_SOURCE_DIR/tools/cliproxyctl"
-    go build -o "$CLIPROXY_BIN_DIR/cliproxyctl" .
-    chmod +x "$CLIPROXY_BIN_DIR/cliproxyctl"
-    if [[ -x "$CLIPROXY_BIN_DIR/cliproxyctl" ]]; then
-        log "cliproxyctl built successfully"
+    # Check if cliproxyctl exists in local tools folder first, then fall back to cloned source
+    local cliproxyctl_dir=""
+    local cliproxyctl_bin=""
+    if [[ -d "$SCRIPT_DIR/tools/cliproxyctl" ]]; then
+        cliproxyctl_dir="$SCRIPT_DIR/tools/cliproxyctl"
+        cliproxyctl_bin="$SCRIPT_DIR/tools/cliproxyctl/cliproxyctl"
+    elif [[ -d "$CLIPROXY_SOURCE_DIR/tools/cliproxyctl" ]]; then
+        cliproxyctl_dir="$CLIPROXY_SOURCE_DIR/tools/cliproxyctl"
+        cliproxyctl_bin="$CLIPROXY_SOURCE_DIR/tools/cliproxyctl/cliproxyctl"
+    else
+        warn "cliproxyctl source not found, skipping..."
+        cd "$SCRIPT_DIR"
+        echo ""
+        return
+    fi
+    cd "$cliproxyctl_dir"
+    go build -o cliproxyctl .
+    chmod +x cliproxyctl
+    if [[ -x "$cliproxyctl_bin" ]]; then
+        log "cliproxyctl built successfully at $cliproxyctl_bin"
     else
         warn "cliproxyctl build failed (non-critical)"
     fi
