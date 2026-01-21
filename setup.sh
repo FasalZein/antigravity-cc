@@ -120,12 +120,32 @@ check_prerequisites() {
     fi
     log "Git: $(git --version | head -1)"
 
-    # Check for Go
-    if ! command -v go &>/dev/null; then
+    # Check for Go - also check common installation paths
+    find_go() {
+        # Check if go is in PATH
+        if command -v go &>/dev/null; then
+            echo "$(command -v go)"
+            return 0
+        fi
+        # Check common Go installation paths
+        for go_path in /usr/local/go/bin/go /usr/lib/go/bin/go /snap/bin/go "$HOME/go/bin/go" "$HOME/.local/go/bin/go"; do
+            if [[ -x "$go_path" ]]; then
+                echo "$go_path"
+                return 0
+            fi
+        done
+        return 1
+    }
+
+    GO_BIN=$(find_go) || GO_BIN=""
+
+    if [[ -z "$GO_BIN" ]]; then
         if [[ "$OS" == "macos" ]]; then
             if command -v brew &>/dev/null; then
                 warn "Go not found. Installing via Homebrew..."
                 brew install go
+                # Update PATH for Homebrew Go
+                export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
             else
                 error "Go not found. Install Homebrew first, then run: brew install go"
             fi
@@ -148,12 +168,32 @@ check_prerequisites() {
                     ;;
             esac
         fi
+
+        # After installation, update PATH to include common Go locations
+        export PATH="/usr/local/go/bin:/usr/lib/go/bin:$HOME/go/bin:$PATH"
+
+        # Re-check for Go after installation
+        GO_BIN=$(find_go) || GO_BIN=""
+        if [[ -z "$GO_BIN" ]]; then
+            echo ""
+            error "Go installation failed or Go is not in PATH. Please install Go manually:
+    
+    For Ubuntu/Debian/WSL:
+      wget https://go.dev/dl/go1.24.4.linux-amd64.tar.gz
+      sudo rm -rf /usr/local/go
+      sudo tar -C /usr/local -xzf go1.24.4.linux-amd64.tar.gz
+      export PATH=\$PATH:/usr/local/go/bin
+    
+    Then run this script again."
+        fi
     fi
 
-    # Verify Go version
-    if command -v go &>/dev/null; then
-        GO_VERSION=$(go version | grep -oE 'go[0-9]+\.[0-9]+' | sed 's/go//')
-        log "Go: $GO_VERSION"
+    # Export GO_BIN for use in build step and add its directory to PATH
+    if [[ -n "$GO_BIN" ]]; then
+        GO_DIR=$(dirname "$GO_BIN")
+        export PATH="$GO_DIR:$PATH"
+        GO_VERSION=$("$GO_BIN" version | grep -oE 'go[0-9]+\.[0-9]+' | sed 's/go//')
+        log "Go: $GO_VERSION (at $GO_BIN)"
     fi
 
     # Check for Node.js
