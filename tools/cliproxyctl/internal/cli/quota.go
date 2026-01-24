@@ -54,14 +54,47 @@ type QuotaAPIResponse struct {
 }
 
 // ModelInfo contains quota information
+// Supports both camelCase and snake_case from API
 type ModelInfo struct {
-	QuotaInfo *QuotaInfoAPI `json:"quotaInfo,omitempty"`
+	QuotaInfo      *QuotaInfoAPI `json:"quotaInfo,omitempty"`
+	QuotaInfoSnake *QuotaInfoAPI `json:"quota_info,omitempty"`
+}
+
+// GetQuotaInfo returns the quota info from either camelCase or snake_case field
+func (m *ModelInfo) GetQuotaInfo() *QuotaInfoAPI {
+	if m.QuotaInfo != nil {
+		return m.QuotaInfo
+	}
+	return m.QuotaInfoSnake
 }
 
 // QuotaInfoAPI contains the actual quota data
+// Supports both camelCase and snake_case from API
 type QuotaInfoAPI struct {
-	RemainingFraction float64 `json:"remainingFraction,omitempty"`
-	ResetTime         string  `json:"resetTime,omitempty"`
+	RemainingFraction      float64 `json:"remainingFraction,omitempty"`
+	RemainingFractionSnake float64 `json:"remaining_fraction,omitempty"`
+	Remaining              float64 `json:"remaining,omitempty"`
+	ResetTime              string  `json:"resetTime,omitempty"`
+	ResetTimeSnake         string  `json:"reset_time,omitempty"`
+}
+
+// GetRemainingFraction returns the remaining fraction from whichever field has data
+func (q *QuotaInfoAPI) GetRemainingFraction() float64 {
+	if q.RemainingFraction > 0 {
+		return q.RemainingFraction
+	}
+	if q.RemainingFractionSnake > 0 {
+		return q.RemainingFractionSnake
+	}
+	return q.Remaining
+}
+
+// GetResetTime returns the reset time from whichever field has data
+func (q *QuotaInfoAPI) GetResetTime() string {
+	if q.ResetTime != "" {
+		return q.ResetTime
+	}
+	return q.ResetTimeSnake
 }
 
 // ProjectResponse from loadCodeAssist API
@@ -334,7 +367,7 @@ func fetchAntigravityQuotas() []AccountQuota {
 						if q.Percentage < minPct {
 							minPct = q.Percentage
 						}
-						if q.Percentage < 100 && q.ResetTime != "" {
+						if q.ResetTime != "" {
 							if earliestResetTime == "" || q.ResetTime < earliestResetTime {
 								earliestResetTime = q.ResetTime
 								earliestReset = q.ResetIn
@@ -708,7 +741,7 @@ func fetchAllQuotas() *DashboardData {
 									minPct = q.Percentage
 								}
 								// Track earliest reset time (for model with lowest quota)
-								if q.Percentage < 100 && q.ResetTime != "" {
+								if q.ResetTime != "" {
 									if earliestResetTime == "" || q.ResetTime < earliestResetTime {
 										earliestResetTime = q.ResetTime
 										earliestReset = q.ResetIn
@@ -1012,12 +1045,15 @@ func fetchQuota(client *http.Client, accessToken, projectID string) ([]ModelQuot
 			continue
 		}
 
-		if info.QuotaInfo != nil {
+		quotaInfo := info.GetQuotaInfo()
+		if quotaInfo != nil {
+			remainingFraction := quotaInfo.GetRemainingFraction()
+			resetTime := quotaInfo.GetResetTime()
 			quota := ModelQuota{
 				Name:       name,
-				Percentage: info.QuotaInfo.RemainingFraction * 100,
-				ResetTime:  info.QuotaInfo.ResetTime,
-				ResetIn:    formatResetTime(info.QuotaInfo.ResetTime),
+				Percentage: remainingFraction * 100,
+				ResetTime:  resetTime,
+				ResetIn:    formatResetTime(resetTime),
 				Group:      getModelGroup(name),
 			}
 			quotas = append(quotas, quota)

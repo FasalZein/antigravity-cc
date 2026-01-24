@@ -59,25 +59,27 @@ export function initializeFromStorage(): void {
 // Computed values
 function getAverageForGroup(groupName: string): { avg: number; resetIn: string; resetTime: string } {
 	if (!dashboard.data?.accounts?.length) return { avg: 0, resetIn: '', resetTime: '' };
-	
+
 	let total = 0;
 	let count = 0;
 	let resetIn = '';
 	let resetTime = '';
-	
+	let lowestPercent = 101; // Start above 100 to capture first valid value
+
 	for (const account of dashboard.data.accounts) {
 		const group = account.groupQuotas?.[groupName];
 		if (group) {
 			total += group.minPercent;
 			count++;
-			// Track earliest reset time
-			if (group.resetTime && (!resetTime || group.resetTime < resetTime)) {
-				resetTime = group.resetTime;
-				resetIn = group.resetIn;
+			// Track reset time of account with lowest quota (most urgently needs reset)
+			if (group.minPercent < lowestPercent) {
+				lowestPercent = group.minPercent;
+				resetTime = group.resetTime || '';
+				resetIn = group.resetIn || '';
 			}
 		}
 	}
-	
+
 	return { avg: count > 0 ? total / count : 0, resetIn, resetTime };
 }
 
@@ -88,27 +90,27 @@ export function getGeminiFlashStats() { return getAverageForGroup('Gemini Flash'
 export function getCodexSessionStats() {
 	if (!dashboard.data?.codexAccounts?.length) return { avg: 0, resetIn: '', resetTime: '' };
 	const avg = dashboard.data.codexAccounts.reduce((sum, a) => sum + (a.sessionPercent || 0), 0) / dashboard.data.codexAccounts.length;
-	// Find earliest reset
-	let earliest = dashboard.data.codexAccounts[0];
+	// Find account with lowest session quota
+	let lowest = dashboard.data.codexAccounts[0];
 	for (const acc of dashboard.data.codexAccounts) {
-		if (acc.sessionResetTime && (!earliest.sessionResetTime || acc.sessionResetTime < earliest.sessionResetTime)) {
-			earliest = acc;
+		if ((acc.sessionPercent || 0) < (lowest.sessionPercent || 0)) {
+			lowest = acc;
 		}
 	}
-	return { avg, resetIn: earliest?.sessionResetIn || '', resetTime: earliest?.sessionResetTime || '' };
+	return { avg, resetIn: lowest?.sessionResetIn || '', resetTime: lowest?.sessionResetTime || '' };
 }
 
 export function getCodexWeeklyStats() {
 	if (!dashboard.data?.codexAccounts?.length) return { avg: 0, resetIn: '', resetTime: '' };
 	const avg = dashboard.data.codexAccounts.reduce((sum, a) => sum + (a.weeklyPercent || 0), 0) / dashboard.data.codexAccounts.length;
-	// Find earliest reset
-	let earliest = dashboard.data.codexAccounts[0];
+	// Find account with lowest weekly quota
+	let lowest = dashboard.data.codexAccounts[0];
 	for (const acc of dashboard.data.codexAccounts) {
-		if (acc.weeklyResetTime && (!earliest.weeklyResetTime || acc.weeklyResetTime < earliest.weeklyResetTime)) {
-			earliest = acc;
+		if ((acc.weeklyPercent || 0) < (lowest.weeklyPercent || 0)) {
+			lowest = acc;
 		}
 	}
-	return { avg, resetIn: earliest?.weeklyResetIn || '', resetTime: earliest?.weeklyResetTime || '' };
+	return { avg, resetIn: lowest?.weeklyResetIn || '', resetTime: lowest?.weeklyResetTime || '' };
 }
 
 export function setActiveTab(tab: 'antigravity' | 'codex' | 'gemini') {
