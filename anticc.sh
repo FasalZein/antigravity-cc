@@ -64,7 +64,7 @@ else
 fi
 
 # Model configuration
-_ANTICC_OPUS_MODEL="gemini-claude-opus-4-5-thinking"
+_ANTICC_OPUS_MODEL="claude-opus-4-6-thinking"
 _ANTICC_SONNET_MODEL="gemini-claude-sonnet-4-5-thinking"
 _ANTICC_HAIKU_MODEL="gemini-3-flash-preview"
 
