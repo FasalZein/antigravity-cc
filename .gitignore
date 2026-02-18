@@ -47,3 +47,8 @@ tools/cliproxyctl/cliproxyctl.exe
 cliproxy-source/
 quotio/
 ccs/
+test-results.json
+test-ar26710-models.ts
+.gitignore
+run-test.sh
+test-output.log
